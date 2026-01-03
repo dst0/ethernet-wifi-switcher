@@ -43,8 +43,8 @@ if (Test-Path $InstallDir) {
     try {
         Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction Stop
     } catch {
-        # Brief pause allows helper processes to release file handles before retrying
-        Start-Sleep -Milliseconds 200
+        # Brief pause allows helper/AV processes to release file handles before retrying
+        Start-Sleep -Milliseconds 500
         Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     Write-Host "Installation directory removed."
