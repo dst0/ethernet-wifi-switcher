@@ -49,48 +49,54 @@ real_user_home(){
 
 detect_interfaces() {
     echo "Detecting network interfaces..."
-    # Use || true to prevent set -e/pipefail from exiting if no match is found
-    WIFI_DEV=$(networksetup -listallhardwareports | awk '/Hardware Port: (Wi-Fi|AirPort)/ {getline; print $2}' | head -n 1) || WIFI_DEV=""
-    ETH_DEV=$(networksetup -listallhardwareports | awk '/Hardware Port: (Ethernet|LAN|USB 10\/100\/1000 LAN)/ {getline; print $2}' | head -n 1) || ETH_DEV=""
-    
-    if [[ -z "$ETH_DEV" ]]; then
-        # If WIFI_DEV is empty, we just look for any 'en' device. 
-        # grep -v returns 1 if no lines are selected, which triggers set -e with pipefail.
-        ETH_DEV=$(networksetup -listallhardwareports | awk '/Device: en/ {print $2}' | grep -v "^${WIFI_DEV}$" | head -n 1) || ETH_DEV=""
+
+    # Detect defaults
+    AUTO_WIFI=$(networksetup -listallhardwareports | awk '/Hardware Port: (Wi-Fi|AirPort)/ {getline; print $2}' | head -n 1) || AUTO_WIFI=""
+    AUTO_ETH=$(networksetup -listallhardwareports | awk '/Hardware Port: (Ethernet|LAN|USB 10\/100\/1000 LAN)/ {getline; print $2}' | head -n 1) || AUTO_ETH=""
+
+    if [[ -z "$AUTO_ETH" ]]; then
+        AUTO_ETH=$(networksetup -listallhardwareports | awk '/Device: en/ {print $2}' | grep -v "^${AUTO_WIFI}$" | head -n 1) || AUTO_ETH=""
     fi
 
+    if [[ -t 0 ]]; then
+        echo ""
+        echo "Available network interfaces:"
+        networksetup -listallhardwareports
+        echo ""
+
+        WIFI_PROMPT=${AUTO_WIFI:-"Not set"}
+        read -p "Enter Wi-Fi interface [$WIFI_PROMPT]: " input_wifi
+        WIFI_DEV=${input_wifi:-$AUTO_WIFI}
+
+        ETH_PROMPT=${AUTO_ETH:-"Not set"}
+        read -p "Enter Ethernet interface [$ETH_PROMPT]: " input_eth
+        ETH_DEV=${input_eth:-$AUTO_ETH}
+    else
+        WIFI_DEV="$AUTO_WIFI"
+        ETH_DEV="$AUTO_ETH"
+    fi
+
+    echo ""
+    echo "Using interfaces:"
     echo "  Wi-Fi:    ${WIFI_DEV:-not found}"
     echo "  Ethernet: ${ETH_DEV:-not found}"
 
     if [[ -z "$WIFI_DEV" || -z "$ETH_DEV" ]]; then
-        if [[ -t 0 ]]; then
-            echo ""
-            echo "⚠️  Automatic detection failed for one or more interfaces."
-            echo "Available network interfaces:"
-            networksetup -listallhardwareports
-            echo ""
-            if [[ -z "$WIFI_DEV" ]]; then
-                read -p "Enter Wi-Fi interface (e.g., en0): " WIFI_DEV
-            fi
-            if [[ -z "$ETH_DEV" ]]; then
-                read -p "Enter Ethernet interface (e.g., en5): " ETH_DEV
-            fi
-        fi
-    fi
-
-    if [[ -z "$WIFI_DEV" || -z "$ETH_DEV" ]]; then
-        die "Could not detect both Wi-Fi and Ethernet interfaces. Please ensure both are present in System Settings > Network or provide them manually."
+        die "Both Wi-Fi and Ethernet interfaces must be specified to continue."
     fi
 }
 
 cleanup_existing() {
     if [[ -f "$SYS_PLIST_PATH" ]]; then
         echo "Existing installation detected at $SYS_PLIST_PATH"
-        # Try to find the WorkingDirectory from the plist
-        OLD_WORKDIR=$(grep -A 1 "WorkingDirectory" "$SYS_PLIST_PATH" | grep "<string>" | sed 's|.*<string>\(.*\)</string>.*|\1|' || true)
 
-        if [[ -n "$OLD_WORKDIR" && -f "$OLD_WORKDIR/uninstall.sh" ]]; then
-            echo "Running existing uninstaller from $OLD_WORKDIR..."
+        # Try to find the WorkingDirectory from the plist
+        # We check WorkingDirectory first, then fallback to StandardOutPath's directory
+        OLD_WORKDIR=$(grep -A 1 "WorkingDirectory" "$SYS_PLIST_PATH" | grep "<string>" | sed 's|.*<string>\(.*\)</string>.*|\1|' | head -n 1 || true)
+
+        if [[ -z "$OLD_WORKDIR" ]]; then
+            OLD_WORKDIR=$(grep -A 1 "StandardOutPath" "$SYS_PLIST_PATH" | grep "<string>" | sed 's|.*<string>\(.*\)</string>.*|\1|' | xargs dirname 2>/dev/null || true)
+        fi
             bash "$OLD_WORKDIR/uninstall.sh" || true
         else
             echo "No existing uninstaller found or could not determine workdir. Performing manual cleanup..."
@@ -153,6 +159,16 @@ main(){
 
   echo "Generating LaunchDaemon plist..."
   echo "$PLIST_CONTENT_B64" | base64 -d > "$WORK_PLIST"
+  sed -i '' "s|\$DAEMON_LABEL|$DAEMON_LABEL|g" "$WORK_PLIST"
+  sed -i '' "s|\$SYS_WATCHER_BIN|$SYS_WATCHER_BIN|g" "$WORK_PLIST"
+  sed -i '' "s|\$SYS_HELPER_PATH|$SYS_HELPER_PATH|g" "$WORK_PLIST"
+  sed -i '' "s|\$HELPER_LOG|$HELPER_LOG|g" "$WORK_PLIST"
+  sed -i '' "s|\$HELPER_ERR|$HELPER_ERR|g" "$WORK_PLIST"
+  sed -i '' "s|\$WATCH_LOG|$WATCH_LOG|g" "$WORK_PLIST"
+  sed -i '' "s|\$WATCH_ERR|$WATCH_ERR|g" "$WORK_PLIST"
+  sed -i '' "s|\$WIFI_DEV|$WIFI_DEV|g" "$WORK_PLIST"
+  sed -i '' "s|\$ETH_DEV|$ETH_DEV|g" "$WORK_PLIST"
+  sed -i '' "s|\$WORKDIR|$WORKDIR|g" "$WORK_PLIST"
 
   cp -f "$WORK_PLIST" "$SYS_PLIST_PATH"
   chown root:wheel "$SYS_PLIST_PATH"
