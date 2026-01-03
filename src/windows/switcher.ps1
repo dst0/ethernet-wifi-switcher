@@ -115,11 +115,29 @@ function Test-InternetConnectivity {
     }
 
     try {
-        # Try to reach the check URL using the specific network adapter
+        # Get the IP address of the adapter to ensure we're testing the right interface
+        $ipAddress = Get-NetIPAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $ipAddress) {
+            Log-Message "No IP address on $($Adapter.Name), cannot check internet"
+            return $false
+        }
+
+        # Try curl.exe first (available in Windows 10 1803+ and Windows 11)
+        $curlPath = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($curlPath) {
+            # Use curl with interface binding for accurate testing
+            $result = & curl.exe --interface $Adapter.Name --connect-timeout 5 --max-time 10 -s -f -o nul $CheckUrl 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                return $true
+            }
+        }
+        
+        # Fallback to Invoke-WebRequest
+        # Note: This uses the default route, so may give false positives if WiFi is active
         $response = Invoke-WebRequest -Uri $CheckUrl -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
         return ($response.StatusCode -eq 200)
     } catch {
-        Log-Message "Internet check failed on $($Adapter.Name): $_"
+        Log-Message "Internet check failed on $($Adapter.Name): $($_.Exception.Message)"
         return $false
     }
 }

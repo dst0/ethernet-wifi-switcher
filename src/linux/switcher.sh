@@ -50,8 +50,12 @@ check_internet() {
             return 0
         fi
     elif command -v wget >/dev/null 2>&1; then
-        if wget --bind-address=$(nmcli -t -f IP4.ADDRESS device show "$iface" | cut -d: -f2 | cut -d/ -f1 | head -n 1) --timeout=10 --tries=1 -q -O /dev/null "$CHECK_URL" 2>/dev/null; then
-            return 0
+        # Get IP address for wget binding
+        iface_ip=$(nmcli -t -f IP4.ADDRESS device show "$iface" 2>/dev/null | cut -d: -f2 | cut -d/ -f1 | head -n 1)
+        if [ -n "$iface_ip" ]; then
+            if wget --bind-address="$iface_ip" --timeout=10 --tries=1 -q -O /dev/null "$CHECK_URL" 2>/dev/null; then
+                return 0
+            fi
         fi
     fi
     return 1
