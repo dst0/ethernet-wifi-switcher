@@ -49,18 +49,37 @@ real_user_home(){
 
 detect_interfaces() {
     echo "Detecting network interfaces..."
-    WIFI_DEV=$(networksetup -listallhardwareports | awk '/Hardware Port: (Wi-Fi|AirPort)/ {getline; print $2}' | head -n 1)
-    ETH_DEV=$(networksetup -listallhardwareports | awk '/Hardware Port: (Ethernet|LAN|USB 10\/100\/1000 LAN)/ {getline; print $2}' | head -n 1)
+    # Use || true to prevent set -e/pipefail from exiting if no match is found
+    WIFI_DEV=$(networksetup -listallhardwareports | awk '/Hardware Port: (Wi-Fi|AirPort)/ {getline; print $2}' | head -n 1) || WIFI_DEV=""
+    ETH_DEV=$(networksetup -listallhardwareports | awk '/Hardware Port: (Ethernet|LAN|USB 10\/100\/1000 LAN)/ {getline; print $2}' | head -n 1) || ETH_DEV=""
     
     if [[ -z "$ETH_DEV" ]]; then
-        ETH_DEV=$(networksetup -listallhardwareports | awk '/Device: en/ {print $2}' | grep -v "$WIFI_DEV" | head -n 1)
+        # If WIFI_DEV is empty, we just look for any 'en' device. 
+        # grep -v returns 1 if no lines are selected, which triggers set -e with pipefail.
+        ETH_DEV=$(networksetup -listallhardwareports | awk '/Device: en/ {print $2}' | grep -v "^${WIFI_DEV}$" | head -n 1) || ETH_DEV=""
     fi
 
     echo "  Wi-Fi:    ${WIFI_DEV:-not found}"
     echo "  Ethernet: ${ETH_DEV:-not found}"
 
     if [[ -z "$WIFI_DEV" || -z "$ETH_DEV" ]]; then
-        die "Could not detect both Wi-Fi and Ethernet interfaces."
+        if [[ -t 0 ]]; then
+            echo ""
+            echo "⚠️  Automatic detection failed for one or more interfaces."
+            echo "Available network interfaces:"
+            networksetup -listallhardwareports
+            echo ""
+            if [[ -z "$WIFI_DEV" ]]; then
+                read -p "Enter Wi-Fi interface (e.g., en0): " WIFI_DEV
+            fi
+            if [[ -z "$ETH_DEV" ]]; then
+                read -p "Enter Ethernet interface (e.g., en5): " ETH_DEV
+            fi
+        fi
+    fi
+
+    if [[ -z "$WIFI_DEV" || -z "$ETH_DEV" ]]; then
+        die "Could not detect both Wi-Fi and Ethernet interfaces. Please ensure both are present in System Settings > Network or provide them manually."
     fi
 }
 
@@ -69,7 +88,7 @@ cleanup_existing() {
         echo "Existing installation detected at $SYS_PLIST_PATH"
         # Try to find the WorkingDirectory from the plist
         OLD_WORKDIR=$(grep -A 1 "WorkingDirectory" "$SYS_PLIST_PATH" | grep "<string>" | sed 's|.*<string>\(.*\)</string>.*|\1|' || true)
-        
+
         if [[ -n "$OLD_WORKDIR" && -f "$OLD_WORKDIR/uninstall.sh" ]]; then
             echo "Running existing uninstaller from $OLD_WORKDIR..."
             bash "$OLD_WORKDIR/uninstall.sh" || true
@@ -113,7 +132,7 @@ main(){
   WORK_UNINSTALL="${WORKDIR}/uninstall.sh"
 
   echo "Workspace: $WORKDIR"
-  
+
   echo "Extracting helper script..."
   echo "$HELPER_CONTENT_B64" | base64 -d > "$WORK_HELPER"
   sed -i '' "s|WIFI_DEV=\"\${WIFI_DEV:-en0}\"|WIFI_DEV=\"$WIFI_DEV\"|g" "$WORK_HELPER"
