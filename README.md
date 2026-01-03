@@ -1,5 +1,13 @@
 # Ethernet Wi-Fi Switcher
 
+[![Release](https://img.shields.io/github/v/release/dst0/ethernet-wifi-switcher)](https://github.com/dst0/ethernet-wifi-switcher/releases)
+[![Build Status](https://github.com/dst0/ethernet-wifi-switcher/actions/workflows/release.yml/badge.svg)](https://github.com/dst0/ethernet-wifi-switcher/actions)
+[![License](https://img.shields.io/badge/license-Proprietary-blue.svg)](LICENSE)
+[![EMF Safe](https://img.shields.io/badge/EMF-Safe-success)](#environmental-and-health-impact)
+[![Energy Efficient](https://img.shields.io/badge/Energy-Efficient-success)](#environmental-and-health-impact)
+
+[![Support Ukraine](https://img.shields.io/badge/Support-Ukraine-FFD700?style=flat&labelColor=0057B7)](https://standforukraine.com/)
+
 This tool automatically manages your Wi-Fi connection based on Ethernet availability across **macOS, Linux, and Windows**. It ensures that Wi-Fi is turned off when a stable Ethernet connection is detected and turned back on when Ethernet is disconnected.
 
 ## Environmental and Health Impact
