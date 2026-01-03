@@ -34,4 +34,5 @@ if (Test-Path $InstallDir) {
     Write-Host "Installation directory removed."
 }
 
-Write-Host "Uninstallation complete."
+Write-Host "✅ Uninstalled completely."
+Write-Host ""

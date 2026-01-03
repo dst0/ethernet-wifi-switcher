@@ -35,3 +35,4 @@ rm -f "$INSTALL_DIR/eth-wifi-auto.sh"
 systemctl daemon-reload
 
 echo "Uninstallation complete."
+echo ""

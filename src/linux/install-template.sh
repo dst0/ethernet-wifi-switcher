@@ -4,7 +4,7 @@ set -euo pipefail
 # Universal Ethernet/Wi-Fi Auto Switcher for Linux
 # This script is self-contained and includes the switcher logic and uninstaller.
 
-DEFAULT_INSTALL_DIR="/usr/local/bin"
+DEFAULT_INSTALL_DIR="/opt/eth-wifi-auto"
 SERVICE_NAME="eth-wifi-auto"
 
 # Embedded components (Base64)
@@ -69,6 +69,7 @@ install() {
         INSTALL_DIR=${input_dir:-$DEFAULT_INSTALL_DIR}
     fi
 
+    echo ""
     # Detect interfaces
     AUTO_ETH=$(nmcli device | grep -E "ethernet" | awk '{print $1}' | head -n 1 || true)
     AUTO_WIFI=$(nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1 || true)
@@ -101,13 +102,16 @@ install() {
 
     mkdir -p "$INSTALL_DIR"
 
+    # Set up paths (matching macOS naming convention)
+    WORK_UNINSTALL="$INSTALL_DIR/uninstall.sh"
+
     # Extract switcher
     echo "$SWITCHER_B64" | base64 -d > "$INSTALL_DIR/eth-wifi-auto.sh"
     chmod +x "$INSTALL_DIR/eth-wifi-auto.sh"
 
     # Extract uninstaller
-    echo "$UNINSTALLER_B64" | base64 -d > "$INSTALL_DIR/uninstall.sh"
-    chmod +x "$INSTALL_DIR/uninstall.sh"
+    echo "$UNINSTALLER_B64" | base64 -d > "$WORK_UNINSTALL"
+    chmod +x "$WORK_UNINSTALL"
 
     # Create systemd service
     cat <<EOF > "/etc/systemd/system/$SERVICE_NAME.service"
@@ -128,7 +132,16 @@ EOF
     systemctl enable "$SERVICE_NAME"
     systemctl start "$SERVICE_NAME"
 
-    echo "Installation complete. Service is running."
+    echo ""
+    echo "✅ Installation complete."
+    echo ""
+    echo "The service is now running. It will automatically:"
+    echo "  • Turn Wi-Fi off when Ethernet is connected"
+    echo "  • Turn Wi-Fi on when Ethernet is disconnected"
+    echo "  • Continue working after OS reboot"
+    echo ""
+    echo "To uninstall, run:"
+    echo "  sudo bash \"$WORK_UNINSTALL\""
 }
 
 uninstall() {

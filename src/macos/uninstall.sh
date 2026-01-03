@@ -22,3 +22,4 @@ echo "Removing workspace..."
 sudo rm -rf "$WORKDIR"
 
 echo "✅ Uninstalled completely."
+echo ""

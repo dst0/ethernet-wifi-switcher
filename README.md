@@ -83,7 +83,7 @@ The pre-compiled Swift watcher is **ad-hoc signed**. When you run the installer,
 The PowerShell scripts are not digitally signed. To run the installer, you must use the `-ExecutionPolicy Bypass` flag (included in the quick install command). Windows may show a "SmartScreen" warning because the script is downloaded from the internet; you may need to click "Run anyway".
 
 ### Linux
-No signing issues, but the installer requires `sudo` to create the `systemd` service and copy files to `/usr/local/bin`.
+No signing issues, but the installer requires `sudo` to create the `systemd` service and copy files to `/opt/eth-wifi-auto`.
 
 ## Building from Source
 
@@ -103,35 +103,124 @@ The project uses a modular build system to generate self-contained installers.
 If you downloaded the script manually, you may need to grant it execution permissions first:
 `chmod +x install-macos.sh` (or `install-linux.sh`).
 
-### macOS
+### 🍎 macOS
 **Install:**
 ```bash
 sudo bash ./dist/install-macos.sh
 ```
-**Uninstall:**
-```bash
-sudo bash ./dist/install-macos.sh --uninstall
+Output:
+```
+...
+Installation directory: /Users/dst0/.ethernet-wifi-auto-switcher
+
+Extracting helper script...
+Extracting watcher binary...
+Installing system binaries...
+Generating LaunchDaemon plist...
+Loading LaunchDaemon...
+
+✅ Installation complete.
+
+The service is now running. It will automatically:
+  • Turn Wi-Fi off when Ethernet is connected
+  • Turn Wi-Fi on when Ethernet is disconnected
+  • Continue working after OS reboot
+
+To uninstall, run:
+  sudo bash ~/.ethernet-wifi-auto-switcher/uninstall.sh
 ```
 
-### Linux
+**Uninstall:**
+```bash
+sudo bash ~/.ethernet-wifi-auto-switcher/uninstall.sh
+```
+Output:
+```
+Stopping LaunchDaemon...
+Stopping any running processes...
+Removing system files...
+Removing workspace...
+✅ Uninstalled completely.
+```
+
+---
+
+### 🐧 Linux
 **Install:**
 ```bash
 sudo bash ./dist/install-linux.sh
 ```
-**Uninstall:**
-```bash
-sudo bash ./dist/install-linux.sh --uninstall
+Output:
+```
+...
+Installation directory: /opt/eth-wifi-auto
+
+...
+Extracting switcher...
+Creating systemd service...
+Starting service...
+
+✅ Installation complete.
+
+The service is now running. It will automatically:
+  • Turn Wi-Fi off when Ethernet is connected
+  • Turn Wi-Fi on when Ethernet is disconnected
+  • Continue working after OS reboot
+
+To uninstall, run:
+  sudo bash "/opt/eth-wifi-auto/uninstall.sh"
 ```
 
-### Windows (PowerShell Admin)
+**Uninstall:**
+```bash
+sudo bash "/opt/eth-wifi-auto/uninstall.sh"
+```
+Output:
+```
+Detected installation directory: /opt/eth-wifi-auto
+Uninstalling Ethernet/Wi-Fi Auto Switcher...
+Uninstallation complete.
+```
+
+---
+
+### 🪟 Windows (PowerShell Admin)
 **Install:**
 ```powershell
 .\dist\install-windows.ps1
 ```
+Output:
+```
+...
+Installation directory: C:\Program Files\EthWifiAuto
+
+Creating Scheduled Task...
+
+✅ Installation complete.
+
+The task is now running. It will automatically:
+  • Turn Wi-Fi off when Ethernet is connected
+  • Turn Wi-Fi on when Ethernet is disconnected
+  • Continue working after OS reboot
+
+To uninstall, run:
+  powershell.exe -ExecutionPolicy Bypass -File "C:\Program Files\EthWifiAuto\uninstall.ps1"
+```
+
 **Uninstall:**
 ```powershell
-.\dist\install-windows.ps1 -Uninstall
+powershell.exe -ExecutionPolicy Bypass -File "C:\Program Files\EthWifiAuto\uninstall.ps1"
 ```
+Output:
+```
+Detected installation directory: C:\Program Files\EthWifiAuto
+Uninstalling Ethernet/Wi-Fi Auto Switcher...
+Scheduled task removed.
+Installation directory removed.
+✅ Uninstalled completely.
+```
+
+---
 
 ## CI/CD Pipeline
 

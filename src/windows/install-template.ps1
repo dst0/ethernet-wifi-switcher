@@ -97,7 +97,16 @@ function Install {
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
 
-    Write-Host "Installation complete. Task is running as SYSTEM."
+    Write-Host ""
+    Write-Host "✅ Installation complete."
+    Write-Host ""
+    Write-Host "The task is now running. It will automatically:"
+    Write-Host "  • Turn Wi-Fi off when Ethernet is connected"
+    Write-Host "  • Turn Wi-Fi on when Ethernet is disconnected"
+    Write-Host "  • Continue working after OS reboot"
+    Write-Host ""
+    Write-Host "To uninstall, run:"
+    Write-Host "  powershell.exe -ExecutionPolicy Bypass -File `"$UninstallerPath`""
 }
 
 function Uninstall {

@@ -173,6 +173,7 @@ main(){
   need_macos
   ensure_root
   cleanup_existing
+  echo ""
   detect_interfaces
 
   if [[ "$WORKDIR" == "$DEFAULT_WORKDIR" && -n "${SUDO_USER:-}" ]]; then
@@ -250,7 +251,16 @@ main(){
   launchctl bootout system "$SYS_PLIST_PATH" >/dev/null 2>&1 || true
   launchctl bootstrap system "$SYS_PLIST_PATH" >/dev/null 2>&1 || true
 
-  echo "✅ Installed successfully."
+  echo ""
+  echo "✅ Installation complete."
+  echo ""
+  echo "The service is now running. It will automatically:"
+  echo "  • Turn Wi-Fi off when Ethernet is connected"
+  echo "  • Turn Wi-Fi on when Ethernet is disconnected"
+  echo "  • Continue working after OS reboot"
+  echo ""
+  echo "To uninstall, run:"
+  echo "  sudo bash \"$WORK_UNINSTALL\""
 }
 
 uninstall() {
