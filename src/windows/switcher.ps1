@@ -51,7 +51,7 @@ function Set-WifiSoftState {
 
     if ($null -eq $Adapter) { return }
 
-    if ($Adapter.Name -notmatch '^[\\w .-]+$') {
+    if ($Adapter.Name -notmatch '^[\w .-]+$') {
         Log-Message "Wi-Fi adapter name contains unsupported characters: '$($Adapter.Name)'"
         return
     }

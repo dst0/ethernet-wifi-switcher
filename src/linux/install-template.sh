@@ -6,6 +6,14 @@ set -eu
 
 DEFAULT_INSTALL_DIR="/opt/eth-wifi-auto"
 SERVICE_NAME="eth-wifi-auto"
+SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
+IS_TEST="${TEST_MODE:-0}"
+
+if [ "$IS_TEST" = "1" ]; then
+    DEFAULT_INSTALL_DIR="/tmp/eth-wifi-auto-test"
+    SERVICE_NAME="eth-wifi-auto-test"
+    SERVICE_FILE="/tmp/$SERVICE_NAME.service"
+fi
 
 # Embedded components (Base64)
 SWITCHER_B64="__SWITCHER_B64__"
@@ -35,9 +43,9 @@ install() {
     fi
 
     # Cleanup existing installation if found
-    if [ -f "/etc/systemd/system/$SERVICE_NAME.service" ]; then
-        echo "Old installation detected at: /etc/systemd/system/$SERVICE_NAME.service"
-        OLD_INSTALL_DIR=$(grep "ExecStart=" "/etc/systemd/system/$SERVICE_NAME.service" | sed 's|ExecStart=||' | xargs dirname || true)
+    if [ -f "$SERVICE_FILE" ]; then
+        echo "Old installation detected at: $SERVICE_FILE"
+        OLD_INSTALL_DIR=$(grep "ExecStart=" "$SERVICE_FILE" | sed 's|ExecStart=||' | xargs dirname || true)
 
         if [ -n "$OLD_INSTALL_DIR" ]; then
             echo "  Installation directory: $OLD_INSTALL_DIR"
@@ -55,7 +63,7 @@ install() {
             systemctl stop "$SERVICE_NAME" 2>/dev/null || true
             systemctl disable "$SERVICE_NAME" 2>/dev/null || true
             stop_helper_processes
-            rm -f "/etc/systemd/system/$SERVICE_NAME.service"
+            rm -f "$SERVICE_FILE"
             systemctl daemon-reload
         fi
     else
@@ -73,6 +81,12 @@ install() {
     # Detect interfaces - prioritize connected interfaces with IP addresses
     AUTO_WIFI=""
     AUTO_ETH=""
+    if [ -n "${ETHERNET_INTERFACE:-}" ]; then
+        AUTO_ETH="$ETHERNET_INTERFACE"
+    fi
+    if [ -n "${WIFI_INTERFACE:-}" ]; then
+        AUTO_WIFI="$WIFI_INTERFACE"
+    fi
 
     # Try nmcli first (NetworkManager - most common on desktop Linux)
     if command -v nmcli > /dev/null 2>&1; then
@@ -208,7 +222,7 @@ install() {
     chmod +x "$WORK_UNINSTALL"
 
     # Create systemd service
-    cat <<EOF > "/etc/systemd/system/$SERVICE_NAME.service"
+    cat <<EOF > "$SERVICE_FILE"
 [Unit]
 Description=Ethernet/Wi-Fi Auto Switcher
 After=network.target
@@ -223,9 +237,13 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable "$SERVICE_NAME"
-    systemctl start "$SERVICE_NAME"
+    if [ "$IS_TEST" = "1" ]; then
+        echo "TEST_MODE=1: skipping systemd enable/start."
+    else
+        systemctl daemon-reload
+        systemctl enable "$SERVICE_NAME"
+        systemctl start "$SERVICE_NAME"
+    fi
 
     echo ""
     echo "✅ Installation complete."

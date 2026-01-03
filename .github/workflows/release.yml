@@ -47,6 +47,47 @@ jobs:
           name: windows-script
           path: dist/install-windows.ps1
 
+  test-linux:
+    name: Test Linux Install/Uninstall
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Linux Installer
+        run: ./build.sh linux
+      - name: Run Linux install/uninstall (test mode)
+        run: |
+          sudo TEST_MODE=1 ETHERNET_INTERFACE=eth0 WIFI_INTERFACE=wlan0 ./dist/install-linux.sh
+          sudo TEST_MODE=1 ./dist/install-linux.sh --uninstall
+
+  test-macos:
+    name: Test macOS Install/Uninstall
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS Installer
+        run: ./build.sh macos
+      - name: Run macOS install/uninstall (test mode)
+        run: |
+          sudo TEST_MODE=1 ETHERNET_INTERFACE=en0 WIFI_INTERFACE=en1 ./dist/install-macos.sh
+          sudo TEST_MODE=1 ./dist/install-macos.sh --uninstall
+
+  test-windows:
+    name: Test Windows Install/Uninstall
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows Installer
+        shell: bash
+        run: ./build.sh windows
+      - name: Run Windows install/uninstall (test mode)
+        shell: pwsh
+        run: |
+          $env:TEST_MODE="1"
+          $env:ETHERNET_INTERFACE="Ethernet0"
+          $env:WIFI_INTERFACE="Wi-Fi"
+          powershell.exe -ExecutionPolicy Bypass -File dist/install-windows.ps1
+          powershell.exe -ExecutionPolicy Bypass -File dist/install-windows.ps1 -Uninstall
+
   release:
     name: Release
     needs: [build-macos, build-linux, build-windows]

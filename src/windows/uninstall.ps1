@@ -1,7 +1,7 @@
 # Uninstaller for Ethernet/Wi-Fi Auto Switcher (Windows)
 
 $TaskName = "EthWifiAutoSwitcher"
-$DefaultInstallDir = "$env:ProgramFiles\EthWifiAuto"
+$DefaultInstallDir = if ($env:TEST_MODE -eq "1") { Join-Path $env:TEMP "EthWifiAutoTest" } else { "$env:ProgramFiles\EthWifiAuto" }
 $LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { Join-Path $env:TEMP "EthWifiAuto" }
 
 Write-Host "Uninstalling Ethernet/Wi-Fi Auto Switcher..."

@@ -6,7 +6,7 @@ param(
 )
 
 $TaskName = "EthWifiAutoSwitcher"
-$DefaultInstallDir = "$env:ProgramFiles\EthWifiAuto"
+$DefaultInstallDir = if ($env:TEST_MODE -eq "1") { Join-Path $env:TEMP "EthWifiAutoTest" } else { "$env:ProgramFiles\EthWifiAuto" }
 
 # Embedded components (Base64)
 $SwitcherB64 = "__SWITCHER_B64__"
@@ -74,6 +74,9 @@ function Install {
         if ($userInput) { $InstallDir = $userInput }
     }
 
+    $envEth = $env:ETHERNET_INTERFACE
+    $envWifi = $env:WIFI_INTERFACE
+
     # Detect interfaces - prioritize connected interfaces with IP addresses
     Write-Host ""
     Write-Host "Detecting network interfaces..."
@@ -108,6 +111,9 @@ function Install {
     $autoEth = if ($ethWithIP) { $ethWithIP.Name } else { "Not detected" }
     $autoWifi = if ($wifiAdapter) { $wifiAdapter.Name } else { "Not detected" }
 
+    if ($envEth) { $autoEth = $envEth }
+    if ($envWifi) { $autoWifi = $envWifi }
+
     Write-Host "  Ethernet: $autoEth"
     Write-Host "  Wi-Fi:    $autoWifi"
     Write-Host ""
@@ -130,12 +136,12 @@ function Install {
         $timeoutInput = Read-Host "DHCP timeout in seconds [7]"
         $timeout = if ($timeoutInput) { [int]$timeoutInput } else { if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 } }
     } else {
-        $ethInput = $autoEth
-        $wifiInput = $autoWifi
+        $ethInput = if ($envEth) { $envEth } else { $autoEth }
+        $wifiInput = if ($envWifi) { $envWifi } else { $autoWifi }
         $timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }
     }
 
-    if ($ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
+    if (-not $ethInput -or -not $wifiInput -or $ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
         Write-Error "Both Ethernet and Wi-Fi interfaces must be detected or specified."
         return
     }
@@ -162,6 +168,12 @@ function Install {
     $UninstallerPath = "$InstallDir\uninstall.ps1"
     $uninstallerBytes = [System.Convert]::FromBase64String($UninstallerB64)
     [System.IO.File]::WriteAllBytes($UninstallerPath, $uninstallerBytes)
+
+    if ($env:TEST_MODE -eq "1") {
+        Write-Host "TEST_MODE=1: skipping scheduled task registration."
+        Write-Host "Install path (test): $InstallDir"
+        return
+    }
 
     # Create Scheduled Task with environment variable
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SwitcherPath`""
