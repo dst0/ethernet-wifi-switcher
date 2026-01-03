@@ -32,6 +32,30 @@ function Get-WifiAdapter {
     Get-NetAdapter | Where-Object { $_.PhysicalMediaType -eq "Native 802.11" -and $_.Status -ne "Not Present" } | Select-Object -First 1
 }
 
+# Toggle Wi-Fi radio using Windows.Devices.Radios API. Falls back silently if API is unavailable.
+function Set-WifiRadioState {
+    [CmdletBinding()]
+    param(
+        [bool]$Enable
+    )
+    try {
+        # Load Windows Runtime assembly; ignore errors if already loaded
+        Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction SilentlyContinue
+        $access = [Windows.Devices.Radios.Radio]::RequestAccessAsync().GetAwaiter().GetResult()
+        if ($access -eq [Windows.Devices.Radios.RadioAccessStatus]::Allowed) {
+            $wifiRadio = [Windows.Devices.Radios.Radio]::GetRadiosAsync().GetAwaiter().GetResult() |
+                Where-Object { $_.Kind -eq [Windows.Devices.Radios.RadioKind]::WiFi } |
+                Select-Object -First 1
+            if ($wifiRadio) {
+                $desiredState = if ($Enable) { [Windows.Devices.Radios.RadioState]::On } else { [Windows.Devices.Radios.RadioState]::Off }
+                $null = $wifiRadio.SetStateAsync($desiredState).GetAwaiter().GetResult()
+            }
+        }
+    } catch {
+        # Ignore any errors; adapter-level commands will act as fallback
+    }
+}
+
 function Test-EthernetConnected {
     param([object]$Adapter)
     if ($null -eq $Adapter -or $Adapter.Status -ne "Up") {
@@ -86,7 +110,9 @@ function Check-And-Switch {
         Log-Message "Ethernet disconnected, enabling Wi-Fi immediately"
         Write-State "disconnected"
         if ($wifi.Status -eq "Disabled") {
-            Enable-NetAdapter -Name $wifi.Name -Confirm:$false
+            # Use radio API to turn on Wi-Fi; fall back to enabling adapter
+            Set-WifiRadioState -Enable:$true
+            Enable-NetAdapter -Name $wifi.Name -Confirm:$false -ErrorAction SilentlyContinue
         }
         return
     }
@@ -105,12 +131,16 @@ function Check-And-Switch {
     if ($currentState -eq "connected") {
         if ($wifi.Status -ne "Disabled") {
             Log-Message "Ethernet connected ($($eth.Name)). Disabling Wi-Fi..."
-            Disable-NetAdapter -Name $wifi.Name -Confirm:$false
+            # Use radio API to turn off Wi-Fi; fall back to disabling adapter
+            Set-WifiRadioState -Enable:$false
+            Disable-NetAdapter -Name $wifi.Name -Confirm:$false -ErrorAction SilentlyContinue
         }
     } else {
         if ($wifi.Status -eq "Disabled") {
             Log-Message "Ethernet disconnected ($($eth.Name)). Enabling Wi-Fi..."
-            Enable-NetAdapter -Name $wifi.Name -Confirm:$false
+            # Use radio API to turn on Wi-Fi; fall back to enabling adapter
+            Set-WifiRadioState -Enable:$true
+            Enable-NetAdapter -Name $wifi.Name -Confirm:$false -ErrorAction SilentlyContinue
         }
     }
 }

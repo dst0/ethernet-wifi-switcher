@@ -70,46 +70,39 @@ function Install {
         if ($userInput) { $InstallDir = $userInput }
     }
 
-    # Detect interfaces - prioritize connected interfaces with IP addresses
+    # Detect interfaces - list all Ethernet and Wi-Fi adapters for user selection
     Write-Host ""
     Write-Host "Detecting network interfaces..."
 
-    # Get all network adapters
-    $allAdapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+    $allAdapters = Get-NetAdapter
 
-    # Method 1: Find Ethernet adapter with IP address (prioritized)
-    $ethWithIP = Get-NetAdapter | Where-Object {
-        $_.Status -eq 'Up' -and
-        $_.PhysicalMediaType -match 'Ethernet|802.3' -and
-        (Get-NetIPAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue)
-    } | Select-Object -First 1
-
-    # Method 2: Fallback to any Ethernet adapter
-    if (-not $ethWithIP) {
-        $ethWithIP = Get-NetAdapter | Where-Object {
-            $_.Status -eq 'Up' -and
-            $_.PhysicalMediaType -match 'Ethernet|802.3'
-        } | Select-Object -First 1
+    $ethCandidates = $allAdapters | Where-Object {
+        $_.PhysicalMediaType -match 'Ethernet|802.3'
     }
-
-    # Method 3: Final fallback - any adapter matching "Ethernet" in name
-    if (-not $ethWithIP) {
-        $ethWithIP = Get-NetAdapter | Where-Object {
-            $_.Status -eq 'Up' -and
-            $_.Name -match 'Ethernet'
-        } | Select-Object -First 1
-    }
-
-    $wifiAdapter = Get-NetAdapter | Where-Object {
-        $_.Status -eq 'Up' -and
+    $wifiCandidates = $allAdapters | Where-Object {
         $_.PhysicalMediaType -match 'Wireless|Native 802.11'
-    } | Select-Object -First 1
+    }
 
-    $autoEth = if ($ethWithIP) { $ethWithIP.Name } else { "Not detected" }
-    $autoWifi = if ($wifiAdapter) { $wifiAdapter.Name } else { "Not detected" }
+    Write-Host "  Ethernet adapters detected:"
+    if ($ethCandidates) {
+        $ethCandidates | ForEach-Object { Write-Host "    $($_.Name)" }
+    } else {
+        Write-Host "    None detected"
+    }
 
-    Write-Host "  Ethernet: $autoEth"
-    Write-Host "  Wi-Fi:    $autoWifi"
+    Write-Host "  Wi-Fi adapters detected:"
+    if ($wifiCandidates) {
+        $wifiCandidates | ForEach-Object { Write-Host "    $($_.Name)" }
+    } else {
+        Write-Host "    None detected"
+    }
+
+    $autoEth = if ($ethCandidates) { $ethCandidates[0].Name } else { "Not detected" }
+    $autoWifi = if ($wifiCandidates) { $wifiCandidates[0].Name } else { "Not detected" }
+
+    Write-Host ""
+    Write-Host "  Default Ethernet: $autoEth"
+    Write-Host "  Default Wi-Fi:    $autoWifi"
     Write-Host ""
 
     if ([Environment]::UserInteractive -and ($autoEth -ne "Not detected" -or $autoWifi -ne "Not detected")) {
