@@ -70,6 +70,65 @@ function Install {
         if ($userInput) { $InstallDir = $userInput }
     }
 
+    # Detect interfaces - prioritize connected interfaces with IP addresses
+    Write-Host ""
+    Write-Host "Detecting network interfaces..."
+
+    # Get all network adapters
+    $allAdapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+
+    # Method 1: Find Ethernet adapter with IP address (prioritized)
+    $ethWithIP = Get-NetAdapter | Where-Object {
+        $_.Status -eq 'Up' -and
+        $_.PhysicalMediaType -match 'Ethernet|802.3' -and
+        (Get-NetIPAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+    } | Select-Object -First 1
+
+    # Method 2: Fallback to any Ethernet adapter
+    if (-not $ethWithIP) {
+        $ethWithIP = Get-NetAdapter | Where-Object {
+            $_.Status -eq 'Up' -and
+            $_.PhysicalMediaType -match 'Ethernet|802.3'
+        } | Select-Object -First 1
+    }
+
+    # Method 3: Final fallback - any adapter matching "Ethernet" in name
+    if (-not $ethWithIP) {
+        $ethWithIP = Get-NetAdapter | Where-Object {
+            $_.Status -eq 'Up' -and
+            $_.Name -match 'Ethernet'
+        } | Select-Object -First 1
+    }
+
+    $wifiAdapter = Get-NetAdapter | Where-Object {
+        $_.Status -eq 'Up' -and
+        $_.PhysicalMediaType -match 'Wireless|Native 802.11'
+    } | Select-Object -First 1
+
+    $autoEth = if ($ethWithIP) { $ethWithIP.Name } else { "Not detected" }
+    $autoWifi = if ($wifiAdapter) { $wifiAdapter.Name } else { "Not detected" }
+
+    Write-Host "  Ethernet: $autoEth"
+    Write-Host "  Wi-Fi:    $autoWifi"
+    Write-Host ""
+
+    if ([Environment]::UserInteractive -and ($autoEth -ne "Not detected" -or $autoWifi -ne "Not detected")) {
+        Write-Host "Press Enter to use auto-detected values, or type interface names to override:"
+        $ethInput = Read-Host "Ethernet interface [$autoEth]"
+        if (-not $ethInput) { $ethInput = $autoEth }
+
+        $wifiInput = Read-Host "Wi-Fi interface [$autoWifi]"
+        if (-not $wifiInput) { $wifiInput = $autoWifi }
+    } else {
+        $ethInput = $autoEth
+        $wifiInput = $autoWifi
+    }
+
+    if ($ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
+        Write-Error "Both Ethernet and Wi-Fi interfaces must be detected or specified."
+        return
+    }
+
     $SwitcherPath = "$InstallDir\eth-wifi-auto.ps1"
 
     Write-Host "Installation directory: $InstallDir"

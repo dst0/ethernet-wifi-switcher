@@ -51,10 +51,80 @@ real_user_home(){
 detect_interfaces() {
     echo "Detecting network interfaces..."
 
-    # Detect defaults
+    # Detect Wi-Fi
     AUTO_WIFI=$(networksetup -listallhardwareports | awk '/Hardware Port: (Wi-Fi|AirPort)/ {getline; print $2}' | head -n 1) || AUTO_WIFI=""
-    AUTO_ETH=$(networksetup -listallhardwareports | awk '/Hardware Port: (Ethernet|LAN|USB 10\/100\/1000 LAN)/ {getline; print $2}' | head -n 1) || AUTO_ETH=""
 
+    # Detect Ethernet - prioritize USB LAN adapters, then other Ethernet/LAN, then any enX interface
+    AUTO_ETH=""
+
+    # Method 1: Prefer USB LAN adapters (e.g., "USB 10/100/1G/2.5G LAN")
+    AUTO_ETH=$(networksetup -listallhardwareports | awk '
+        /Hardware Port:.*USB.*LAN/ {
+            getline;
+            if ($1 == "Device:") {
+                print $2;
+                exit
+            }
+        }
+    ')
+
+    # Method 2: If no USB found, try other Ethernet/LAN interfaces with IP addresses
+    if [ -z "$AUTO_ETH" ]; then
+        networksetup -listallhardwareports | awk '
+            /Hardware Port:.*Ethernet|Hardware Port:.*LAN/ {
+                if ($0 !~ /Thunderbolt Bridge|USB/) {
+                    getline;
+                    if ($1 == "Device:") {
+                        print $2
+                    }
+                }
+            }
+        ' | while read -r iface; do
+            if [ -n "$iface" ] && [ "$iface" != "$AUTO_WIFI" ]; then
+                ip=$(/usr/sbin/ipconfig getifaddr "$iface" 2>/dev/null || true)
+                if [ -n "$ip" ]; then
+                    AUTO_ETH="$iface"
+                    echo "$iface" > /tmp/auto_eth_detected.$$
+                    break
+                fi
+            fi
+        done
+
+        if [ -f /tmp/auto_eth_detected.$$ ]; then
+            AUTO_ETH=$(cat /tmp/auto_eth_detected.$$)
+            rm -f /tmp/auto_eth_detected.$$
+        fi
+    fi
+
+    # Method 3: If still not found, try any Ethernet/LAN interface by name pattern (without IP check)
+    if [ -z "$AUTO_ETH" ]; then
+        AUTO_ETH=$(networksetup -listallhardwareports | awk '
+            /Hardware Port:.*Ethernet|Hardware Port:.*LAN/ {
+                if ($0 !~ /Thunderbolt Bridge|USB/) {
+                    getline;
+                    if ($1 == "Device:") {
+                        print $2;
+                        exit
+                    }
+                }
+            }
+        ')
+    fi
+
+    # Method 4: Fallback to any enX interface that's not Wi-Fi and has IP
+    if [ -z "$AUTO_ETH" ]; then
+        for iface in $(networksetup -listallhardwareports | awk '/Device: en/ {print $2}'); do
+            if [ "$iface" != "$AUTO_WIFI" ]; then
+                ip=$(/usr/sbin/ipconfig getifaddr "$iface" 2>/dev/null || true)
+                if [ -n "$ip" ]; then
+                    AUTO_ETH="$iface"
+                    break
+                fi
+            fi
+        done
+    fi
+
+    # Method 5: Final fallback - any enX that's not Wi-Fi
     if [ -z "$AUTO_ETH" ]; then
         AUTO_ETH=$(networksetup -listallhardwareports | awk '/Device: en/ {print $2}' | grep -v "^${AUTO_WIFI}$" | head -n 1) || AUTO_ETH=""
     fi

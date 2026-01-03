@@ -70,14 +70,90 @@ install() {
     fi
 
     echo ""
-    # Detect interfaces
-    AUTO_ETH=$(nmcli device | grep -E "ethernet" | awk '{print $1}' | head -n 1 || true)
-    AUTO_WIFI=$(nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1 || true)
+    # Detect interfaces - prioritize connected interfaces with IP addresses
+    AUTO_WIFI=""
+    AUTO_ETH=""
+
+    # Try nmcli first (NetworkManager - most common on desktop Linux)
+    if command -v nmcli > /dev/null 2>&1; then
+        AUTO_WIFI=$(nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1 || true)
+        # Method 1: Find ethernet interface that is connected (has IP)
+        AUTO_ETH=$(nmcli device | grep -E "ethernet.*connected" | awk '{print $1}' | head -n 1 || true)
+        # Method 2: Fallback to any ethernet interface
+        if [ -z "$AUTO_ETH" ]; then
+            AUTO_ETH=$(nmcli device | grep -E "ethernet" | awk '{print $1}' | head -n 1 || true)
+        fi
+    fi
+
+    # Fallback to ip command (more universal)
+    if [ -z "$AUTO_ETH" ] && command -v ip > /dev/null 2>&1; then
+        # Method 3: Find ethernet with IP using 'ip' command
+        for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -E '^(eth|enp|eno|ens)'); do
+            # Check if interface has an IPv4 address
+            if ip addr show "$iface" 2>/dev/null | grep -q "inet "; then
+                AUTO_ETH="$iface"
+                break
+            fi
+        done
+
+        # Method 4: Any ethernet-like interface
+        if [ -z "$AUTO_ETH" ]; then
+            AUTO_ETH=$(ip -o link show | awk -F': ' '{print $2}' | grep -E '^(eth|enp|eno|ens)' | head -n 1 || true)
+        fi
+
+        # Detect Wi-Fi
+        if [ -z "$AUTO_WIFI" ]; then
+            AUTO_WIFI=$(ip -o link show | awk -F': ' '{print $2}' | grep -E '^(wlan|wlp)' | head -n 1 || true)
+        fi
+    fi
+
+    # Final fallback to /sys/class/net
+    if [ -z "$AUTO_ETH" ] && [ -d /sys/class/net ]; then
+        # Method 5: Find ethernet with IP from /sys
+        for iface in /sys/class/net/*; do
+            iface_name=$(basename "$iface")
+            if echo "$iface_name" | grep -qE '^(eth|enp|eno|ens)'; then
+                # Check if interface has carrier (cable connected)
+                if [ -f "$iface/carrier" ] && [ "$(cat "$iface/carrier" 2>/dev/null)" = "1" ]; then
+                    AUTO_ETH="$iface_name"
+                    break
+                fi
+            fi
+        done
+
+        # Method 6: Any ethernet-like interface from /sys
+        if [ -z "$AUTO_ETH" ]; then
+            for iface in /sys/class/net/*; do
+                iface_name=$(basename "$iface")
+                if echo "$iface_name" | grep -qE '^(eth|enp|eno|ens)'; then
+                    AUTO_ETH="$iface_name"
+                    break
+                fi
+            done
+        fi
+
+        # Detect Wi-Fi from /sys
+        if [ -z "$AUTO_WIFI" ]; then
+            for iface in /sys/class/net/*; do
+                iface_name=$(basename "$iface")
+                if echo "$iface_name" | grep -qE '^(wlan|wlp)' && [ -d "$iface/wireless" ]; then
+                    AUTO_WIFI="$iface_name"
+                    break
+                fi
+            done
+        fi
+    fi
 
     if [ -t 0 ]; then
         echo ""
         echo "Available network interfaces:"
-        nmcli device
+        if command -v nmcli > /dev/null 2>&1; then
+            nmcli device
+        elif command -v ip > /dev/null 2>&1; then
+            ip -brief link show
+        else
+            ls /sys/class/net/ 2>/dev/null || echo "Unable to list interfaces"
+        fi
         echo ""
 
         ETH_PROMPT=${AUTO_ETH:-"Not set"}
