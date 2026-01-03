@@ -1,6 +1,10 @@
 # Universal Ethernet/Wi-Fi Auto Switcher for Windows
 # This script is self-contained and includes the switcher logic and uninstaller.
 
+param(
+    [switch]$Uninstall
+)
+
 $TaskName = "EthWifiAutoSwitcher"
 $DefaultInstallDir = "$env:ProgramFiles\EthWifiAuto"
 
@@ -75,35 +79,31 @@ function Install {
     Write-Host "Detecting network interfaces..."
 
     # Get all network adapters
-    $allAdapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+    $allAdapters = Get-NetAdapter
+    $ethCandidates = $allAdapters | Where-Object { $_.PhysicalMediaType -match 'Ethernet|802.3' }
+    $wifiCandidates = $allAdapters | Where-Object { $_.PhysicalMediaType -match 'Wireless|Native 802.11' }
 
     # Method 1: Find Ethernet adapter with IP address (prioritized)
-    $ethWithIP = Get-NetAdapter | Where-Object {
+    $ethWithIP = $ethCandidates | Where-Object {
         $_.Status -eq 'Up' -and
-        $_.PhysicalMediaType -match 'Ethernet|802.3' -and
         (Get-NetIPAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue)
     } | Select-Object -First 1
 
-    # Method 2: Fallback to any Ethernet adapter
+    # Method 2: Fallback to any Ethernet adapter that is up
     if (-not $ethWithIP) {
-        $ethWithIP = Get-NetAdapter | Where-Object {
-            $_.Status -eq 'Up' -and
-            $_.PhysicalMediaType -match 'Ethernet|802.3'
-        } | Select-Object -First 1
+        $ethWithIP = $ethCandidates | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1
     }
 
-    # Method 3: Final fallback - any adapter matching "Ethernet" in name
+    # Method 3: Final fallback - any Ethernet adapter
     if (-not $ethWithIP) {
-        $ethWithIP = Get-NetAdapter | Where-Object {
-            $_.Status -eq 'Up' -and
-            $_.Name -match 'Ethernet'
-        } | Select-Object -First 1
+        $ethWithIP = $ethCandidates | Select-Object -First 1
     }
 
-    $wifiAdapter = Get-NetAdapter | Where-Object {
-        $_.Status -eq 'Up' -and
-        $_.PhysicalMediaType -match 'Wireless|Native 802.11'
-    } | Select-Object -First 1
+    # Wi-Fi detection: prefer active adapters, but allow disabled ones too
+    $wifiAdapter = $wifiCandidates | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1
+    if (-not $wifiAdapter) {
+        $wifiAdapter = $wifiCandidates | Select-Object -First 1
+    }
 
     $autoEth = if ($ethWithIP) { $ethWithIP.Name } else { "Not detected" }
     $autoWifi = if ($wifiAdapter) { $wifiAdapter.Name } else { "Not detected" }
@@ -196,10 +196,6 @@ function Uninstall {
     $uninstallerScript = [System.Text.Encoding]::UTF8.GetString($uninstallerBytes)
     Invoke-Expression $uninstallerScript
 }
-
-param(
-    [switch]$Uninstall
-)
 
 if ($Uninstall) {
     Uninstall

@@ -3,11 +3,22 @@
 
 $StateFile = "$env:TEMP\eth-wifi-state.txt"
 $Timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }
+$LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { Split-Path $StateFile }
+$LogFile = Join-Path $LogDir "switcher.log"
 
 function Log-Message {
     param([string]$Message)
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Write-Host "[$timestamp] $Message"
+    $line = "[$timestamp] $Message"
+    Write-Host $line
+    try {
+        if (-not (Test-Path $LogDir)) {
+            New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+        }
+        Add-Content -Path $LogFile -Value $line -Encoding UTF8
+    } catch {
+        # Logging failures should not break functionality
+    }
 }
 
 function Read-LastState {
@@ -30,6 +41,22 @@ function Get-EthernetAdapter {
 
 function Get-WifiAdapter {
     Get-NetAdapter | Where-Object { $_.PhysicalMediaType -eq "Native 802.11" -and $_.Status -ne "Not Present" } | Select-Object -First 1
+}
+
+function Set-WifiSoftState {
+    param(
+        [object]$Adapter,
+        [bool]$Enable
+    )
+
+    if ($null -eq $Adapter) { return }
+
+    $target = if ($Enable) { "ENABLED" } else { "DISABLED" }
+    $output = & netsh interface set interface name="$($Adapter.Name)" admin=$target 2>&1
+
+    if ($LASTEXITCODE -ne 0) {
+        Log-Message "Failed to set Wi-Fi $target: $output"
+    }
 }
 
 function Test-EthernetConnected {
@@ -74,7 +101,10 @@ function Check-And-Switch {
     $eth = Get-EthernetAdapter
     $wifi = Get-WifiAdapter
 
-    if ($null -eq $eth -or $null -eq $wifi) { return }
+    if ($null -eq $eth -or $null -eq $wifi) {
+        Log-Message "Missing adapters (Ethernet: $($eth?.Name), Wi-Fi: $($wifi?.Name)). Waiting..."
+        return
+    }
 
     $lastState = Read-LastState
 
@@ -85,8 +115,8 @@ function Check-And-Switch {
     if ($lastState -eq "connected" -and $currentState -eq "disconnected") {
         Log-Message "Ethernet disconnected, enabling Wi-Fi immediately"
         Write-State "disconnected"
-        if ($wifi.Status -eq "Disabled") {
-            Enable-NetAdapter -Name $wifi.Name -Confirm:$false
+        if ($wifi.Status -eq "Disabled" -or $wifi.Status -eq "Down") {
+            Set-WifiSoftState -Adapter $wifi -Enable $true
         }
         return
     }
@@ -105,17 +135,18 @@ function Check-And-Switch {
     if ($currentState -eq "connected") {
         if ($wifi.Status -ne "Disabled") {
             Log-Message "Ethernet connected ($($eth.Name)). Disabling Wi-Fi..."
-            Disable-NetAdapter -Name $wifi.Name -Confirm:$false
+            Set-WifiSoftState -Adapter $wifi -Enable:$false
         }
     } else {
-        if ($wifi.Status -eq "Disabled") {
+        if ($wifi.Status -eq "Disabled" -or $wifi.Status -eq "Down") {
             Log-Message "Ethernet disconnected ($($eth.Name)). Enabling Wi-Fi..."
-            Enable-NetAdapter -Name $wifi.Name -Confirm:$false
+            Set-WifiSoftState -Adapter $wifi -Enable:$true
         }
     }
 }
 
 # Initial check
+Log-Message "Starting switcher (timeout ${Timeout}s)"
 Check-And-Switch
 
 # Register for CIM events (Network Adapter status changes)

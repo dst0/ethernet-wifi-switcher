@@ -2,6 +2,7 @@
 
 $TaskName = "EthWifiAutoSwitcher"
 $DefaultInstallDir = "$env:ProgramFiles\EthWifiAuto"
+$LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { "$env:TEMP\\EthWifiAuto" }
 
 Write-Host "Uninstalling Ethernet/Wi-Fi Auto Switcher..."
 
@@ -29,9 +30,23 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 # Kill any orphaned processes
 Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*eth-wifi-auto.ps1*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
+$originalLocation = Get-Location
+if ($InstallDir -and ($originalLocation.Path -like "$InstallDir*")) {
+    Set-Location $env:TEMP
+}
+
 if (Test-Path $InstallDir) {
-    Remove-Item -Path $InstallDir -Recurse -Force
+    try {
+        Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction Stop
+    } catch {
+        Start-Sleep -Milliseconds 200
+        Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     Write-Host "Installation directory removed."
+}
+
+if (Test-Path $LogDir) {
+    Remove-Item -Path $LogDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "✅ Uninstalled completely."
