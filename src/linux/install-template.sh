@@ -252,6 +252,7 @@ EOF
     echo "  • Turn Wi-Fi off when Ethernet is connected"
     echo "  • Turn Wi-Fi on when Ethernet is disconnected"
     echo "  • Continue working after OS reboot"
+    echo "Logs: sudo journalctl -u $SERVICE_NAME -f"
     echo ""
     echo "To uninstall, run:"
     echo "  sudo sh \"$WORK_UNINSTALL\""

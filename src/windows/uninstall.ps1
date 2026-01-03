@@ -34,8 +34,17 @@ $originalLocation = Get-Location
 if ($InstallDir) {
     $originalPath = [System.IO.Path]::GetFullPath($originalLocation.Path)
     $installPath = [System.IO.Path]::GetFullPath($InstallDir)
-    $relative = [System.IO.Path]::GetRelativePath($installPath, $originalPath)
-    $isInside = (-not [string]::IsNullOrEmpty($relative)) -and (-not $relative.StartsWith("..", [System.StringComparison]::OrdinalIgnoreCase))
+    $isInside = $false
+    try {
+        if ([System.IO.Path]::GetRelativePath) {
+            $relative = [System.IO.Path]::GetRelativePath($installPath, $originalPath)
+            $isInside = (-not [string]::IsNullOrEmpty($relative)) -and (-not $relative.StartsWith("..", [System.StringComparison]::OrdinalIgnoreCase))
+        }
+    } catch {
+        # GetRelativePath not available on older PowerShell; fallback to string prefix
+        $installPathWithSep = if ($installPath.EndsWith('\')) { $installPath } else { "$installPath\" }
+        $isInside = $originalPath.StartsWith($installPathWithSep, [System.StringComparison]::OrdinalIgnoreCase)
+    }
     # Avoid deleting the current working directory during uninstall by moving away if inside install path
     if ($isInside) {
         Set-Location $env:TEMP

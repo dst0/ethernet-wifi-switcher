@@ -327,6 +327,12 @@ This micro-app is designed with extreme efficiency in mind:
   - Linux: < 5MB (Bash/nmcli)
   - Windows: < 20MB (PowerShell)
 
+## Logging
+
+- **Windows**: `%ProgramData%\EthWifiAuto\switcher.log` (created after first run). View with `Get-Content -Path "$env:ProgramData\EthWifiAuto\switcher.log" -Wait`.
+- **macOS**: Logs in your workdir (default `~/.ethernet-wifi-auto-switcher`): `watch.log` (watcher) and `helper.log` (helper). View with `tail -f ~/.ethernet-wifi-auto-switcher/watch.log ~/.ethernet-wifi-auto-switcher/helper.log`.
+- **Linux**: Systemd journal for the service. View with `sudo journalctl -u eth-wifi-auto -f`.
+
 ## Project Structure
 
 - `src/macos/`: macOS source files (Swift watcher, installer template, plist).

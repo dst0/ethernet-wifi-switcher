@@ -74,6 +74,8 @@ function Install {
         if ($userInput) { $InstallDir = $userInput }
     }
 
+    $LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { Join-Path $InstallDir "logs" }
+
     $envEth = $env:ETHERNET_INTERFACE
     $envWifi = $env:WIFI_INTERFACE
 
@@ -198,6 +200,7 @@ function Install {
     Write-Host "  • Turn Wi-Fi off when Ethernet is connected"
     Write-Host "  • Turn Wi-Fi on when Ethernet is disconnected"
     Write-Host "  • Continue working after OS reboot"
+    Write-Host "Logs: $LogDir\switcher.log (created after first run). Tail with: Get-Content -Path `"$LogDir\switcher.log`" -Wait"
     Write-Host ""
     Write-Host "To uninstall, run:"
     Write-Host "  powershell.exe -ExecutionPolicy Bypass -File `"$UninstallerPath`""

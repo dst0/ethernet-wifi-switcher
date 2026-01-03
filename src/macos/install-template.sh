@@ -356,6 +356,7 @@ main(){
   echo "  • Turn Wi-Fi off when Ethernet is connected"
   echo "  • Turn Wi-Fi on when Ethernet is disconnected"
   echo "  • Continue working after OS reboot"
+  echo "Logs: $WATCH_LOG (watcher) and $HELPER_LOG (helper). Tail with: tail -f \"$WATCH_LOG\" \"$HELPER_LOG\""
   echo ""
   echo "To uninstall, run:"
   echo "  sudo sh \"$WORK_UNINSTALL\""
