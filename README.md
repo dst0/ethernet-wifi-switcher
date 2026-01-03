@@ -99,6 +99,7 @@ This application is designed to optimize energy efficiency and minimize the user
 - **Intelligent Interface Detection**: Automatically identifies and prioritizes network interfaces with active IP addresses.
 - **Smart State Tracking**: Persistent state management enables instant Wi-Fi activation on disconnect and retry logic only when connecting.
 - **Configurable Timeout**: Adjustable IP acquisition timeout (default 7s) via `TIMEOUT` environment variable for slow routers.
+- **Optional Internet Connectivity Monitoring**: Monitor actual internet availability instead of just link status. Switches to Wi-Fi if Ethernet loses internet access.
 - **Universal Linux Support**: Fallback detection using `nmcli` → `ip` command → `/sys/class/net` for maximum compatibility.
 - **Zero CPU Idle Usage**: All implementations sleep until the system notifies them of a network change.
 - **POSIX Compliant**: Shell scripts work across different shells and minimal Linux distributions.
@@ -153,6 +154,51 @@ $env:TIMEOUT=10; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows
 - Fast home network: 5 seconds
 - Normal network: 7 seconds (default)
 - Slow/enterprise network: 10-15 seconds
+
+### Internet Connectivity Monitoring (Optional)
+
+In addition to monitoring interface link status, you can optionally enable **Internet Connectivity Monitoring** to detect when an interface has an active connection but no actual internet access (e.g., captive portals, authentication required, upstream network issues).
+
+**What it does:**
+- Periodically checks actual internet connectivity by attempting to reach a test URL
+- If Ethernet has a connection but no internet, switches to Wi-Fi automatically
+- Uses lightweight HTTP requests to minimize overhead
+- Default check URL: `http://captive.apple.com/hotspot-detect.html` (Apple's captive portal detection endpoint)
+
+**When to enable:**
+- **Corporate networks**: Networks that require authentication or have intermittent connectivity
+- **Public hotspots**: Environments with captive portals that may cause false "connected" states
+- **Unreliable ISPs**: When you need automatic failover to backup connectivity
+- **Multi-WAN setups**: When you have both wired and wireless internet sources
+
+**Configuration options:**
+
+During installation, you will be prompted whether to enable internet monitoring:
+```bash
+Enable internet monitoring? (y/N): y
+Check interval in seconds [30]: 30
+Check URL [http://captive.apple.com/hotspot-detect.html]: 
+```
+
+For non-interactive/automated installations, set environment variables:
+```bash
+# macOS/Linux
+CHECK_INTERNET=1 CHECK_INTERVAL=30 CHECK_URL="http://captive.apple.com/hotspot-detect.html" sudo bash ./install-macos.sh
+
+# Windows
+$env:CHECK_INTERNET=1; $env:CHECK_INTERVAL=30; $env:CHECK_URL="http://captive.apple.com/hotspot-detect.html"; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
+```
+
+**Platform-specific behavior:**
+- **Linux**: Periodic background checks every `CHECK_INTERVAL` seconds (default: 30s)
+- **macOS**: Checks triggered by network events only (no periodic polling for efficiency)
+- **Windows**: Periodic timer-based checks every `CHECK_INTERVAL` seconds (default: 30s)
+
+**Recommended settings:**
+- Check interval: 30-60 seconds (balance between responsiveness and overhead)
+- Check URL: Use a reliable, lightweight endpoint (captive.apple.com, detectportal.firefox.com, or connectivitycheck.gstatic.com)
+
+**Note:** This feature is **disabled by default** to maintain backward compatibility and minimize overhead for users who don't need it.
 
 ### Event-Driven Architecture
 The app remains idle and consumes zero CPU cycles until a network event is triggered by the OS.
