@@ -203,12 +203,33 @@ In addition to monitoring interface link status, you can optionally enable **Int
 During installation, you will be prompted whether to enable internet monitoring:
 ```bash
 Enable internet monitoring? (y/N): y
+
 Select connectivity check method:
   1) Ping to gateway (recommended - most reliable and provider-safe)
   2) Ping to domain/IP address
   3) HTTP/HTTPS check (curl) - May be blocked by ISP/firewall
 Enter choice [1]: 1
-Check interval in seconds [30]: 30
+Selected: Gateway ping (auto-detected per interface)
+
+Enter check interval in seconds [30]: 30
+Check interval: 30s
+
+Log every check attempt? (y/N) [logs only state changes by default]: N
+Default: Will log only state changes (failure/recovery)
+
+Multi-Interface Configuration (Optional):
+  Configure priority for multiple ethernet or wifi interfaces.
+
+Configure interface priority? (y/N): y
+Available interfaces:
+  eth0 (ethernet)
+  eth1 (ethernet)
+  wlan0 (wifi)
+
+Enter interfaces in priority order (comma-separated, highest first):
+Example: eth0,eth1,wlan0
+Interface priority: eth0,eth1,wlan0
+Priority configured: eth0,eth1,wlan0
 ```
 
 For non-interactive/automated installations, set environment variables:
@@ -216,23 +237,51 @@ For non-interactive/automated installations, set environment variables:
 # macOS/Linux - Gateway ping (recommended)
 CHECK_INTERNET=1 CHECK_METHOD=gateway CHECK_INTERVAL=30 sudo bash ./install-linux.sh
 
-# macOS/Linux - Ping to 8.8.8.8
-CHECK_INTERNET=1 CHECK_METHOD=ping CHECK_TARGET=8.8.8.8 CHECK_INTERVAL=30 sudo bash ./install-linux.sh
+# macOS/Linux - Ping to 8.8.8.8 with verbose logging
+CHECK_INTERNET=1 CHECK_METHOD=ping CHECK_TARGET=8.8.8.8 CHECK_INTERVAL=30 LOG_CHECK_ATTEMPTS=1 sudo bash ./install-linux.sh
 
-# macOS/Linux - HTTP check
-CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_TARGET="http://captive.apple.com/hotspot-detect.html" CHECK_INTERVAL=30 sudo bash ./install-linux.sh
+# macOS/Linux - HTTP check with multi-interface priority
+CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_TARGET="http://captive.apple.com/hotspot-detect.html" CHECK_INTERVAL=30 INTERFACE_PRIORITY="eth0,eth1,wlan0" sudo bash ./install-linux.sh
 
 # Windows examples
 $env:CHECK_INTERNET=1; $env:CHECK_METHOD="gateway"; $env:CHECK_INTERVAL=30; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
 ```
 
+**Logging behavior:**
+
+By default, internet connectivity checks only log state changes:
+- When internet becomes unreachable (was working before)
+- When internet recovers (working again after failure)
+
+Enable verbose logging (`LOG_CHECK_ATTEMPTS=1`) to log every single check attempt:
+```bash
+LOG_CHECK_ATTEMPTS=1 sudo bash ./install-linux.sh
+```
+
+This is useful for debugging but creates more log entries. Example logs:
+```
+[2026-01-03 18:00:00] Internet check: eth0 is now unreachable (was working before)
+[2026-01-03 18:00:30] Internet check: eth0 is now reachable (recovered from failure)
+```
+
+With verbose logging enabled:
+```
+[2026-01-03 18:00:00] Internet check: gateway ping to 192.168.1.1 via eth0 succeeded
+[2026-01-03 18:00:30] Internet check: gateway ping to 192.168.1.1 via eth0 failed
+[2026-01-03 18:01:00] Internet check: gateway ping to 192.168.1.1 via eth0 succeeded
+```
+
 **Multi-interface support:**
 
-To use multiple ethernet or wifi interfaces with priority ordering:
-```bash
-# Prioritize interfaces (comma-separated, highest priority first)
-INTERFACE_PRIORITY="eth0,eth1,wlan0" sudo bash ./install-linux.sh
-```
+Configure multiple ethernet or wifi interfaces with priority ordering during installation:
+- Interactive prompt shows available interfaces
+- Specify priority order (comma-separated, highest priority first)
+- System tries interfaces in order until one with connectivity is found
+
+Example configuration: `eth0,eth1,wlan0` means:
+1. Try eth0 first
+2. If eth0 unavailable/no internet, try eth1
+3. If eth1 unavailable/no internet, fall back to wlan0
 
 The system will try interfaces in order until one with internet connectivity is found.
 
@@ -244,6 +293,7 @@ The system will try interfaces in order until one with internet connectivity is 
 **Recommended settings:**
 - **Check method:** Gateway ping (safest, works everywhere)
 - **Check interval:** 30-60 seconds (balance between responsiveness and overhead)
+- **Logging:** Default (state changes only) for normal operation, verbose for debugging
 - **Alternative targets:** For ping method: 8.8.8.8, 1.1.1.1, or your preferred DNS
 
 **Note:** This feature is **disabled by default** to maintain backward compatibility and minimize overhead for users who don't need it.
