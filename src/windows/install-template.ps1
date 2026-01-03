@@ -8,6 +8,24 @@ $DefaultInstallDir = "$env:ProgramFiles\EthWifiAuto"
 $SwitcherB64 = "__SWITCHER_B64__"
 $UninstallerB64 = "__UNINSTALLER_B64__"
 
+function Stop-HelperProcesses {
+    $helperProcs = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*eth-wifi-auto.ps1*" }
+    if ($helperProcs) {
+        Write-Host "Stopping helper processes..."
+        $helperProcs | ForEach-Object {
+            $procId = $_.ProcessId
+            $procName = $_.Name
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 100
+            if (-not (Get-Process -Id $procId -ErrorAction SilentlyContinue)) {
+                Write-Host "    process $procId $procName stopped"
+            } else {
+                Write-Host "    process $procId $procName failed to stop"
+            }
+        }
+    }
+}
+
 function Install {
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         Write-Error "Please run as Administrator."
@@ -17,19 +35,33 @@ function Install {
     # Cleanup existing installation if found
     $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if ($existingTask) {
-        Write-Host "Existing installation detected."
+        Write-Host "Old installation detected: Scheduled Task '$TaskName'"
+
+        $OldInstallDir = $null
+        $OldUninstaller = $null
+
         if ($existingTask.Actions[0].Arguments -match '-File "(.*)"') {
             $OldSwitcherPath = $matches[1]
             $OldInstallDir = Split-Path $OldSwitcherPath
+            Write-Host "  Installation directory: $OldInstallDir"
             $OldUninstaller = Join-Path $OldInstallDir "uninstall.ps1"
-            if (Test-Path $OldUninstaller) {
-                Write-Host "Running existing uninstaller from $OldInstallDir..."
-                powershell.exe -ExecutionPolicy Bypass -File "$OldUninstaller"
-            } else {
-                Write-Host "Performing manual cleanup of existing task..."
-                Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-            }
         }
+
+        if ($OldUninstaller -and (Test-Path $OldUninstaller)) {
+            Write-Host "  Running existing uninstaller..."
+            powershell.exe -ExecutionPolicy Bypass -File "$OldUninstaller"
+        } else {
+            if (-not $OldInstallDir) {
+                Write-Host "  Installation directory not found. Performing manual cleanup..."
+            } else {
+                Write-Host "  No uninstaller found. Performing manual cleanup..."
+            }
+            Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+            Stop-HelperProcesses
+        }
+    } else {
+        Write-Host "No old installation detected."
     }
 
     $InstallDir = $DefaultInstallDir
@@ -40,7 +72,8 @@ function Install {
 
     $SwitcherPath = "$InstallDir\eth-wifi-auto.ps1"
 
-    Write-Host "Installing Ethernet/Wi-Fi Auto Switcher to $InstallDir..."
+    Write-Host "Installation directory: $InstallDir"
+    Write-Host ""
 
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null

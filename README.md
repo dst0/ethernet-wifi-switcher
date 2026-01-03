@@ -22,9 +22,8 @@ This application is designed to optimize energy efficiency and minimize the user
   - **macOS**: Uses `SCDynamicStore` (Native Swift).
   - **Linux**: Uses `nmcli monitor` (NetworkManager).
   - **Windows**: Uses `CIM Indication Events` (PowerShell).
+- **Automatic Interface Detection**: Identifies network interfaces automatically, with an option to manually override during installation.
 - **Zero CPU Idle Usage**: All implementations sleep until the system notifies them of a network change.
-- **Robust Detection**: Verifies actual connectivity before switching.
-- **Automatic Interface Detection**: No manual configuration required.
 
 ## How it Works
 

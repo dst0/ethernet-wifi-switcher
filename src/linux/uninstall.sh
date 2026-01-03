@@ -23,6 +23,8 @@ if systemctl is-active --quiet "$SERVICE_NAME"; then
     systemctl stop "$SERVICE_NAME"
 fi
 
+pkill -f "eth-wifi-auto.sh" || true
+
 if systemctl is-enabled --quiet "$SERVICE_NAME"; then
     systemctl disable "$SERVICE_NAME"
 fi

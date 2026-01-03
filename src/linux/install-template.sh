@@ -11,6 +11,24 @@ SERVICE_NAME="eth-wifi-auto"
 SWITCHER_B64="__SWITCHER_B64__"
 UNINSTALLER_B64="__UNINSTALLER_B64__"
 
+stop_helper_processes() {
+    local helper_pids
+    helper_pids=$(pgrep -f "eth-wifi-auto.sh" || true)
+    if [ -n "$helper_pids" ]; then
+        echo "Stopping helper processes..."
+        for pid in $helper_pids; do
+            pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "eth-wifi-auto.sh")
+            kill "$pid" 2>/dev/null || true
+            sleep 0.1
+            if ! ps -p "$pid" >/dev/null 2>&1; then
+                echo "    process $pid $pname stopped"
+            else
+                echo "    process $pid $pname failed to stop"
+            fi
+        done
+    fi
+}
+
 install() {
     if [ "$EUID" -ne 0 ]; then
         echo "Please run as root (sudo)"
@@ -19,18 +37,30 @@ install() {
 
     # Cleanup existing installation if found
     if [ -f "/etc/systemd/system/$SERVICE_NAME.service" ]; then
-        echo "Existing installation detected."
+        echo "Old installation detected at: /etc/systemd/system/$SERVICE_NAME.service"
         OLD_INSTALL_DIR=$(grep "ExecStart=" "/etc/systemd/system/$SERVICE_NAME.service" | sed 's|ExecStart=||' | xargs dirname || true)
+
+        if [ -n "$OLD_INSTALL_DIR" ]; then
+            echo "  Installation directory: $OLD_INSTALL_DIR"
+        fi
+
         if [ -n "$OLD_INSTALL_DIR" ] && [ -f "$OLD_INSTALL_DIR/uninstall.sh" ]; then
-            echo "Running existing uninstaller from $OLD_INSTALL_DIR..."
+            echo "  Running existing uninstaller..."
             bash "$OLD_INSTALL_DIR/uninstall.sh" || true
         else
-            echo "Performing manual cleanup of existing service..."
+            if [ -z "$OLD_INSTALL_DIR" ]; then
+                echo "  Install folder not found. Performing manual cleanup..."
+            else
+                echo "  No uninstaller found. Performing manual cleanup..."
+            fi
             systemctl stop "$SERVICE_NAME" 2>/dev/null || true
             systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+            stop_helper_processes
             rm -f "/etc/systemd/system/$SERVICE_NAME.service"
             systemctl daemon-reload
         fi
+    else
+        echo "No old installation detected."
     fi
 
     INSTALL_DIR="$DEFAULT_INSTALL_DIR"
@@ -66,7 +96,8 @@ install() {
         exit 1
     fi
 
-    echo "Installing Ethernet/Wi-Fi Auto Switcher to $INSTALL_DIR..."
+    echo "Installation directory: $INSTALL_DIR"
+    echo ""
 
     mkdir -p "$INSTALL_DIR"
 

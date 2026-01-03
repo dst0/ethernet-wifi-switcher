@@ -86,26 +86,86 @@ detect_interfaces() {
     fi
 }
 
-cleanup_existing() {
-    if [[ -f "$SYS_PLIST_PATH" ]]; then
-        echo "Existing installation detected at $SYS_PLIST_PATH"
+stop_processes_by_pattern() {
+    local pattern="$1"
+    local label="$2"
+    local pids
+    pids=$(pgrep -f "$pattern" || true)
 
-        # Try to find the WorkingDirectory from the plist
-        # We check WorkingDirectory first, then fallback to StandardOutPath's directory
-        OLD_WORKDIR=$(grep -A 1 "WorkingDirectory" "$SYS_PLIST_PATH" | grep "<string>" | sed 's|.*<string>\(.*\)</string>.*|\1|' | head -n 1 || true)
+    if [[ -n "$pids" ]]; then
+        echo "Stopping $label processes..."
+        for pid in $pids; do
+            pname=$(ps -p "$pid" -o comm= 2>/dev/null || echo "$pattern")
+            kill "$pid" 2>/dev/null || true
+            sleep 0.1
+            if ! ps -p "$pid" >/dev/null 2>&1; then
+                echo "    process $pid $pname stopped"
+            else
+                echo "    process $pid $pname failed to stop"
+            fi
+        done
+    fi
+}
+
+cleanup_existing() {
+    local found_old_install=0
+
+    # 1. Look for the standard plist
+    if [[ -f "$SYS_PLIST_PATH" ]]; then
+        found_old_install=1
+        echo "Old installation detected at: $SYS_PLIST_PATH"
+
+        # Use plutil to safely extract values (handles binary plists)
+        OLD_WORKDIR=$(plutil -extract WorkingDirectory raw -o - "$SYS_PLIST_PATH" 2>/dev/null || true)
 
         if [[ -z "$OLD_WORKDIR" ]]; then
-            OLD_WORKDIR=$(grep -A 1 "StandardOutPath" "$SYS_PLIST_PATH" | grep "<string>" | sed 's|.*<string>\(.*\)</string>.*|\1|' | xargs dirname 2>/dev/null || true)
+            OLD_LOGPATH=$(plutil -extract StandardOutPath raw -o - "$SYS_PLIST_PATH" 2>/dev/null || true)
+            if [[ -n "$OLD_LOGPATH" ]]; then
+                OLD_WORKDIR=$(dirname "$OLD_LOGPATH")
+            fi
         fi
 
-        if [[ -n "$OLD_WORKDIR" && -f "$OLD_WORKDIR/uninstall.sh" ]]; then
-            echo "Running existing uninstaller from $OLD_WORKDIR..."
+        if [[ -n "$OLD_WORKDIR" ]]; then
+            echo "  Workspace directory: $OLD_WORKDIR"
+        fi
+
+        if [[ -n "$OLD_WORKDIR" ]] && [[ -f "$OLD_WORKDIR/uninstall.sh" ]]; then
+            echo "  Running existing uninstaller..."
             bash "$OLD_WORKDIR/uninstall.sh" || true
         else
-            echo "No existing uninstaller found or could not determine workdir. Performing manual cleanup..."
+            if [[ -z "$OLD_WORKDIR" ]]; then
+                echo "  Workspace directory not found. Performing manual cleanup..."
+            else
+                echo "  No uninstaller found. Performing manual cleanup..."
+            fi
+            stop_processes_by_pattern "ethwifiauto-watch" "watcher"
+            stop_processes_by_pattern "eth-wifi-auto.sh" "helper"
             launchctl bootout system "$SYS_PLIST_PATH" 2>/dev/null || true
+            launchctl unload "$SYS_PLIST_PATH" 2>/dev/null || true
             rm -f "$SYS_PLIST_PATH" "$SYS_HELPER_PATH" "$SYS_WATCHER_BIN"
         fi
+    fi
+
+    # 2. Extra safety: check for any other plists that might be ours
+    for extra_plist in /Library/LaunchDaemons/com.eth-wifi-auto*.plist /Library/LaunchDaemons/com.ethwifiauto*.plist; do
+        if [[ -f "$extra_plist" ]]; then
+            # Skip the one we are about to install if it's already there (handled above)
+            [[ "$extra_plist" == "$SYS_PLIST_PATH" ]] && continue
+
+            found_old_install=1
+            echo "Old installation detected at: $extra_plist"
+            echo "  Removing legacy configuration..."
+            stop_processes_by_pattern "ethwifiauto-watch" "watcher"
+            stop_processes_by_pattern "eth-wifi-auto.sh" "helper"
+            launchctl bootout system "$extra_plist" 2>/dev/null || true
+            launchctl unload "$extra_plist" 2>/dev/null || true
+            rm -f "$extra_plist"
+        fi
+    done
+
+    # 3. Report status
+    if [[ "$found_old_install" -eq 0 ]]; then
+        echo "No old installation detected."
     fi
 }
 
@@ -140,7 +200,8 @@ main(){
   WORK_PLIST="${WORKDIR}/${DAEMON_LABEL}.plist"
   WORK_UNINSTALL="${WORKDIR}/uninstall.sh"
 
-  echo "Workspace: $WORKDIR"
+  echo "Installation directory: $WORKDIR"
+  echo ""
 
   echo "Extracting helper script..."
   echo "$HELPER_CONTENT_B64" | base64 -d > "$WORK_HELPER"

@@ -15,11 +15,11 @@ let daemonLabel = args[4]
 let wifiDev = args[5]
 let ethDev = args[6]
 
-// Enough to survive macOS transition phases without being noisy
-let retryDelays: [TimeInterval] = [0.0, 1.0, 3.0]
+// Single check after delay to let network settle
+let retryDelays: [TimeInterval] = [2.0]
 
 // Prevent callback storms from spawning multiple batches
-let minGapBetweenBatches: TimeInterval = 3.0
+let minGapBetweenBatches: TimeInterval = 5.0
 var lastBatch = Date(timeIntervalSince1970: 0)
 
 func log(_ msg: String) {
