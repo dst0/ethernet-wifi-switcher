@@ -9,36 +9,38 @@ on:
 
 jobs:
   build-macos:
+    name: Build macOS
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Build macOS Installer
         run: ./build.sh macos
-
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-install-script
+          name: macos-script
           path: dist/install-macos.sh
 
-  prepare-linux-windows:
+  build-linux:
+    name: Build Linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Build Linux Installer
         run: ./build.sh linux
-
-      - name: Build Windows Installer
-        run: ./build.sh windows
-
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-script
           path: dist/install-linux.sh
 
+  build-windows:
+    name: Build Windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows Installer
+        run: ./build.sh windows
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -46,7 +48,8 @@ jobs:
           path: dist/install-windows.ps1
 
   release:
-    needs: [build-macos, prepare-linux-windows]
+    name: Release
+    needs: [build-macos, build-linux, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
