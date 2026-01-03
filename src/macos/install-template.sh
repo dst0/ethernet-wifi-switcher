@@ -174,19 +174,62 @@ detect_interfaces() {
         read -r input_check_internet
         if [ "$input_check_internet" = "y" ] || [ "$input_check_internet" = "Y" ]; then
             CHECK_INTERNET=1
-            printf "Enter check URL [http://captive.apple.com/hotspot-detect.html]: "
-            read -r input_check_url
-            CHECK_URL=${input_check_url:-http://captive.apple.com/hotspot-detect.html}
+            
+            echo ""
+            echo "Select connectivity check method:"
+            echo "  1) Ping to gateway (recommended - most reliable and provider-safe)"
+            echo "  2) Ping to domain/IP address"
+            echo "  3) HTTP/HTTPS check (curl) - May be blocked by ISP/firewall"
+            echo ""
+            printf "Enter choice [1]: "
+            read -r input_check_method
+            input_check_method=${input_check_method:-1}
+            
+            case "$input_check_method" in
+                1)
+                    CHECK_METHOD="gateway"
+                    CHECK_TARGET=""
+                    echo "Using gateway ping (auto-detected per interface)"
+                    ;;
+                2)
+                    CHECK_METHOD="ping"
+                    printf "Enter domain/IP to ping [8.8.8.8]: "
+                    read -r input_check_target
+                    CHECK_TARGET=${input_check_target:-8.8.8.8}
+                    echo "Using ping to $CHECK_TARGET"
+                    ;;
+                3)
+                    CHECK_METHOD="curl"
+                    echo ""
+                    echo "⚠️  WARNING: HTTP/HTTPS checks may be blocked by:"
+                    echo "   - Corporate firewalls"
+                    echo "   - ISP content filtering"
+                    echo "   - Captive portals (ironically)"
+                    echo "   - Deep packet inspection systems"
+                    echo ""
+                    printf "Enter URL to check [http://captive.apple.com/hotspot-detect.html]: "
+                    read -r input_check_target
+                    CHECK_TARGET=${input_check_target:-http://captive.apple.com/hotspot-detect.html}
+                    echo "Using HTTP check to $CHECK_TARGET"
+                    ;;
+                *)
+                    echo "Invalid choice, using gateway ping (default)"
+                    CHECK_METHOD="gateway"
+                    CHECK_TARGET=""
+                    ;;
+            esac
         else
             CHECK_INTERNET=0
-            CHECK_URL="http://captive.apple.com/hotspot-detect.html"
+            CHECK_METHOD="gateway"
+            CHECK_TARGET=""
         fi
     else
         WIFI_DEV="$AUTO_WIFI"
         ETH_DEV="$AUTO_ETH"
         TIMEOUT="${TIMEOUT:-7}"
         CHECK_INTERNET="${CHECK_INTERNET:-0}"
-        CHECK_URL="${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}"
+        CHECK_METHOD="${CHECK_METHOD:-gateway}"
+        CHECK_TARGET="${CHECK_TARGET:-}"
     fi
 
     echo ""
@@ -196,7 +239,10 @@ detect_interfaces() {
     echo "  Timeout:  ${TIMEOUT}s"
     echo "  Check Internet: $CHECK_INTERNET"
     if [ "$CHECK_INTERNET" = "1" ]; then
-        echo "  Check URL: $CHECK_URL"
+        echo "  Check Method: $CHECK_METHOD"
+        if [ -n "$CHECK_TARGET" ]; then
+            echo "  Check Target: $CHECK_TARGET"
+        fi
     fi
 
     if [ -z "$WIFI_DEV" ] || [ -z "$ETH_DEV" ]; then
@@ -332,7 +378,8 @@ main(){
   sed -i '' "s|STATE_DIR=\"\${STATE_DIR:-/tmp}\"|STATE_DIR=\"$STATE_DIR\"|g" "$WORK_HELPER"
   sed -i '' "s|TIMEOUT=\"\${TIMEOUT:-7}\"|TIMEOUT=\"$TIMEOUT\"|g" "$WORK_HELPER"
   sed -i '' "s|CHECK_INTERNET=\"\${CHECK_INTERNET:-0}\"|CHECK_INTERNET=\"$CHECK_INTERNET\"|g" "$WORK_HELPER"
-  sed -i '' "s|CHECK_URL=\"\${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}\"|CHECK_URL=\"$CHECK_URL\"|g" "$WORK_HELPER"
+  sed -i '' "s|CHECK_METHOD=\"\${CHECK_METHOD:-gateway}\"|CHECK_METHOD=\"$CHECK_METHOD\"|g" "$WORK_HELPER"
+  sed -i '' "s|CHECK_TARGET=\"\${CHECK_TARGET:-}\"|CHECK_TARGET=\"$CHECK_TARGET\"|g" "$WORK_HELPER"
   chmod +x "$WORK_HELPER"
 
   echo "Extracting watcher binary..."

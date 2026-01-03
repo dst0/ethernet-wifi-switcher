@@ -5,7 +5,8 @@ $StateFile = "$env:TEMP\eth-wifi-state.txt"
 $Timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }
 $CheckInternet = if ($env:CHECK_INTERNET) { [int]$env:CHECK_INTERNET } else { 0 }
 $CheckInterval = if ($env:CHECK_INTERVAL) { [int]$env:CHECK_INTERVAL } else { 30 }
-$CheckUrl = if ($env:CHECK_URL) { $env:CHECK_URL } else { "http://captive.apple.com/hotspot-detect.html" }
+$CheckMethod = if ($env:CHECK_METHOD) { $env:CHECK_METHOD } else { "gateway" }
+$CheckTarget = if ($env:CHECK_TARGET) { $env:CHECK_TARGET } else { "" }
 $LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { Split-Path $StateFile }
 $LogFile = Join-Path $LogDir "switcher.log"
 
@@ -122,20 +123,55 @@ function Test-InternetConnectivity {
             return $false
         }
 
-        # Try curl.exe first (available in Windows 10 1803+ and Windows 11)
-        $curlPath = Get-Command curl.exe -ErrorAction SilentlyContinue
-        if ($curlPath) {
-            # Use curl with interface binding for accurate testing
-            $result = & curl.exe --interface $Adapter.Name --connect-timeout 5 --max-time 10 -s -f -o nul $CheckUrl 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                return $true
+        switch ($CheckMethod) {
+            "gateway" {
+                # Ping gateway - most reliable and safest method
+                $gateway = Get-NetRoute -InterfaceIndex $Adapter.ifIndex -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty NextHop
+                if (-not $gateway) {
+                    Log-Message "No gateway found for $($Adapter.Name)"
+                    return $false
+                }
+                # Ping gateway with short timeout
+                $pingResult = Test-Connection -ComputerName $gateway -Count 1 -TimeoutSeconds 2 -Quiet -ErrorAction SilentlyContinue
+                return $pingResult
+            }
+            
+            "ping" {
+                # Ping domain/IP - requires CHECK_TARGET to be set
+                if ([string]::IsNullOrEmpty($CheckTarget)) {
+                    Log-Message "CHECK_TARGET not set for ping method"
+                    return $false
+                }
+                $pingResult = Test-Connection -ComputerName $CheckTarget -Count 1 -TimeoutSeconds 3 -Quiet -ErrorAction SilentlyContinue
+                return $pingResult
+            }
+            
+            "curl" {
+                # HTTP/HTTPS check using curl - may be blocked by providers
+                if ([string]::IsNullOrEmpty($CheckTarget)) {
+                    $CheckTarget = "http://captive.apple.com/hotspot-detect.html"
+                }
+                
+                # Try curl.exe first (available in Windows 10 1803+ and Windows 11)
+                $curlPath = Get-Command curl.exe -ErrorAction SilentlyContinue
+                if ($curlPath) {
+                    # Use curl with interface binding for accurate testing
+                    $result = & curl.exe --interface $Adapter.Name --connect-timeout 5 --max-time 10 -s -f -o nul $CheckTarget 2>$null
+                    if ($LASTEXITCODE -eq 0) {
+                        return $true
+                    }
+                }
+                
+                # Fallback to Invoke-WebRequest
+                $response = Invoke-WebRequest -Uri $CheckTarget -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+                return ($response.StatusCode -eq 200)
+            }
+            
+            default {
+                Log-Message "Unknown CHECK_METHOD: $CheckMethod"
+                return $false
             }
         }
-        
-        # Fallback to Invoke-WebRequest
-        # Note: This uses the default route, so may give false positives if WiFi is active
-        $response = Invoke-WebRequest -Uri $CheckUrl -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
-        return ($response.StatusCode -eq 200)
     } catch {
         Log-Message "Internet check failed on $($Adapter.Name): $($_.Exception.Message)"
         return $false

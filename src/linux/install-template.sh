@@ -201,16 +201,59 @@ install() {
         read -r input_check_internet
         if [ "$input_check_internet" = "y" ] || [ "$input_check_internet" = "Y" ]; then
             CHECK_INTERNET=1
+            
+            echo ""
+            echo "Select connectivity check method:"
+            echo "  1) Ping to gateway (recommended - most reliable and provider-safe)"
+            echo "  2) Ping to domain/IP address"
+            echo "  3) HTTP/HTTPS check (curl) - May be blocked by ISP/firewall"
+            echo ""
+            printf "Enter choice [1]: "
+            read -r input_check_method
+            input_check_method=${input_check_method:-1}
+            
+            case "$input_check_method" in
+                1)
+                    CHECK_METHOD="gateway"
+                    CHECK_TARGET=""
+                    echo "Using gateway ping (auto-detected per interface)"
+                    ;;
+                2)
+                    CHECK_METHOD="ping"
+                    printf "Enter domain/IP to ping [8.8.8.8]: "
+                    read -r input_check_target
+                    CHECK_TARGET=${input_check_target:-8.8.8.8}
+                    echo "Using ping to $CHECK_TARGET"
+                    ;;
+                3)
+                    CHECK_METHOD="curl"
+                    echo ""
+                    echo "⚠️  WARNING: HTTP/HTTPS checks may be blocked by:"
+                    echo "   - Corporate firewalls"
+                    echo "   - ISP content filtering"
+                    echo "   - Captive portals (ironically)"
+                    echo "   - Deep packet inspection systems"
+                    echo ""
+                    printf "Enter URL to check [http://captive.apple.com/hotspot-detect.html]: "
+                    read -r input_check_target
+                    CHECK_TARGET=${input_check_target:-http://captive.apple.com/hotspot-detect.html}
+                    echo "Using HTTP check to $CHECK_TARGET"
+                    ;;
+                *)
+                    echo "Invalid choice, using gateway ping (default)"
+                    CHECK_METHOD="gateway"
+                    CHECK_TARGET=""
+                    ;;
+            esac
+            
             printf "Enter check interval in seconds [30]: "
             read -r input_check_interval
             CHECK_INTERVAL=${input_check_interval:-30}
-            printf "Enter check URL [http://captive.apple.com/hotspot-detect.html]: "
-            read -r input_check_url
-            CHECK_URL=${input_check_url:-http://captive.apple.com/hotspot-detect.html}
         else
             CHECK_INTERNET=0
             CHECK_INTERVAL=30
-            CHECK_URL="http://captive.apple.com/hotspot-detect.html"
+            CHECK_METHOD="gateway"
+            CHECK_TARGET=""
         fi
     else
         ETH_DEV="$AUTO_ETH"
@@ -218,7 +261,8 @@ install() {
         TIMEOUT="${TIMEOUT:-7}"
         CHECK_INTERNET="${CHECK_INTERNET:-0}"
         CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
-        CHECK_URL="${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}"
+        CHECK_METHOD="${CHECK_METHOD:-gateway}"
+        CHECK_TARGET="${CHECK_TARGET:-}"
     fi
 
     if [ -z "$ETH_DEV" ] || [ -z "$WIFI_DEV" ]; then
@@ -234,8 +278,11 @@ install() {
     echo "  Timeout:  ${TIMEOUT}s"
     echo "  Check Internet: $CHECK_INTERNET"
     if [ "$CHECK_INTERNET" = "1" ]; then
+        echo "  Check Method: $CHECK_METHOD"
+        if [ -n "$CHECK_TARGET" ]; then
+            echo "  Check Target: $CHECK_TARGET"
+        fi
         echo "  Check Interval: ${CHECK_INTERVAL}s"
-        echo "  Check URL: $CHECK_URL"
     fi
 
     mkdir -p "$INSTALL_DIR"
@@ -262,7 +309,8 @@ ExecStart=$INSTALL_DIR/eth-wifi-auto.sh
 Environment="TIMEOUT=$TIMEOUT"
 Environment="CHECK_INTERNET=$CHECK_INTERNET"
 Environment="CHECK_INTERVAL=$CHECK_INTERVAL"
-Environment="CHECK_URL=$CHECK_URL"
+Environment="CHECK_METHOD=$CHECK_METHOD"
+Environment="CHECK_TARGET=$CHECK_TARGET"
 Restart=always
 RestartSec=5
 

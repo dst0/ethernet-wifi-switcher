@@ -8,7 +8,8 @@ STATE_FILE="${STATE_FILE:-/tmp/eth-wifi-state}"
 TIMEOUT="${TIMEOUT:-7}"
 CHECK_INTERNET="${CHECK_INTERNET:-0}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
-CHECK_URL="${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}"
+CHECK_METHOD="${CHECK_METHOD:-gateway}"
+CHECK_TARGET="${CHECK_TARGET:-}"
 INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
 
 log() {
@@ -29,11 +30,51 @@ write_state(){
 }
 
 get_eth_dev() {
+    # If INTERFACE_PRIORITY is set, use it; otherwise default behavior
+    if [ -n "$INTERFACE_PRIORITY" ]; then
+        # Parse priority list and return first available ethernet interface
+        echo "$INTERFACE_PRIORITY" | tr ',' '\n' | while read -r iface; do
+            iface=$(echo "$iface" | xargs) # trim whitespace
+            if [ -n "$iface" ]; then
+                iface_type=$(nmcli device | grep "^$iface " | awk '{print $2}')
+                if [ "$iface_type" = "ethernet" ]; then
+                    echo "$iface"
+                    return 0
+                fi
+            fi
+        done
+    fi
+    # Default: get first ethernet interface
     nmcli device | grep -E "ethernet" | awk '{print $1}' | head -n 1
 }
 
 get_wifi_dev() {
+    # If INTERFACE_PRIORITY is set, check it for wifi interfaces
+    if [ -n "$INTERFACE_PRIORITY" ]; then
+        # Parse priority list and return first available wifi interface
+        echo "$INTERFACE_PRIORITY" | tr ',' '\n' | while read -r iface; do
+            iface=$(echo "$iface" | xargs) # trim whitespace
+            if [ -n "$iface" ]; then
+                iface_type=$(nmcli device | grep "^$iface " | awk '{print $2}')
+                if [ "$iface_type" = "wifi" ]; then
+                    echo "$iface"
+                    return 0
+                fi
+            fi
+        done
+    fi
+    # Default: get first wifi interface
     nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1
+}
+
+get_all_eth_devs() {
+    # Get all ethernet devices
+    nmcli device | grep -E "ethernet" | awk '{print $1}'
+}
+
+get_all_wifi_devs() {
+    # Get all wifi devices
+    nmcli device | grep -E "wifi" | awk '{print $1}'
 }
 
 get_all_network_devs() {
@@ -43,21 +84,59 @@ get_all_network_devs() {
 
 check_internet() {
     iface="$1"
-    # Check if interface has internet connectivity using curl with interface binding
-    # Use quick timeout and retry to minimize delay
-    if command -v curl >/dev/null 2>&1; then
-        if curl --interface "$iface" --connect-timeout 5 --max-time 10 -s -f "$CHECK_URL" >/dev/null 2>&1; then
-            return 0
-        fi
-    elif command -v wget >/dev/null 2>&1; then
-        # Get IP address for wget binding
-        iface_ip=$(nmcli -t -f IP4.ADDRESS device show "$iface" 2>/dev/null | cut -d: -f2 | cut -d/ -f1 | head -n 1)
-        if [ -n "$iface_ip" ]; then
-            if wget --bind-address="$iface_ip" --timeout=10 --tries=1 -q -O /dev/null "$CHECK_URL" 2>/dev/null; then
+    
+    case "$CHECK_METHOD" in
+        gateway)
+            # Ping gateway - most reliable and safest method
+            # Get the gateway for this interface
+            gateway=$(ip route show dev "$iface" | grep default | awk '{print $3}' | head -n 1)
+            if [ -z "$gateway" ]; then
+                log "No gateway found for $iface"
+                return 1
+            fi
+            # Ping gateway with short timeout
+            if ping -I "$iface" -c 1 -W 2 "$gateway" >/dev/null 2>&1; then
                 return 0
             fi
-        fi
-    fi
+            ;;
+        
+        ping)
+            # Ping domain/IP - requires CHECK_TARGET to be set
+            if [ -z "$CHECK_TARGET" ]; then
+                log "CHECK_TARGET not set for ping method"
+                return 1
+            fi
+            if ping -I "$iface" -c 1 -W 3 "$CHECK_TARGET" >/dev/null 2>&1; then
+                return 0
+            fi
+            ;;
+        
+        curl)
+            # HTTP/HTTPS check using curl - may be blocked by providers
+            if [ -z "$CHECK_TARGET" ]; then
+                CHECK_TARGET="http://captive.apple.com/hotspot-detect.html"
+            fi
+            if command -v curl >/dev/null 2>&1; then
+                if curl --interface "$iface" --connect-timeout 5 --max-time 10 -s -f "$CHECK_TARGET" >/dev/null 2>&1; then
+                    return 0
+                fi
+            elif command -v wget >/dev/null 2>&1; then
+                # Get IP address for wget binding
+                iface_ip=$(nmcli -t -f IP4.ADDRESS device show "$iface" 2>/dev/null | cut -d: -f2 | cut -d/ -f1 | head -n 1)
+                if [ -n "$iface_ip" ]; then
+                    if wget --bind-address="$iface_ip" --timeout=10 --tries=1 -q -O /dev/null "$CHECK_TARGET" 2>/dev/null; then
+                        return 0
+                    fi
+                fi
+            fi
+            ;;
+        
+        *)
+            log "Unknown CHECK_METHOD: $CHECK_METHOD"
+            return 1
+            ;;
+    esac
+    
     return 1
 }
 

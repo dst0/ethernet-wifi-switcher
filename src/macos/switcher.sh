@@ -12,7 +12,8 @@ ETH_DEV="${ETH_DEV:-en5}"
 STATE_FILE="${STATE_FILE:-/tmp/eth-wifi-state}"
 TIMEOUT="${TIMEOUT:-7}"
 CHECK_INTERNET="${CHECK_INTERNET:-0}"
-CHECK_URL="${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}"
+CHECK_METHOD="${CHECK_METHOD:-gateway}"
+CHECK_TARGET="${CHECK_TARGET:-}"
 
 now(){ "$DATE" "+%Y-%m-%d %H:%M:%S"; }
 log(){ echo "[$(now)] $*"; }
@@ -78,12 +79,50 @@ eth_is_up_with_retry(){
 
 check_internet(){
   iface="$1"
-  # Check if interface has internet connectivity using curl with interface binding
-  if command -v curl >/dev/null 2>&1; then
-    if curl --interface "$iface" --connect-timeout 5 --max-time 10 -s -f "$CHECK_URL" >/dev/null 2>&1; then
-      return 0
-    fi
-  fi
+  
+  case "$CHECK_METHOD" in
+    gateway)
+      # Ping gateway - most reliable and safest method
+      gateway=$(netstat -nr | grep "^default" | grep "$iface" | awk '{print $2}' | head -n 1)
+      if [ -z "$gateway" ]; then
+        log "No gateway found for $iface"
+        return 1
+      fi
+      # Ping gateway with short timeout
+      if ping -c 1 -W 2000 -b "$iface" "$gateway" >/dev/null 2>&1; then
+        return 0
+      fi
+      ;;
+    
+    ping)
+      # Ping domain/IP - requires CHECK_TARGET to be set
+      if [ -z "$CHECK_TARGET" ]; then
+        log "CHECK_TARGET not set for ping method"
+        return 1
+      fi
+      if ping -c 1 -W 3000 -b "$iface" "$CHECK_TARGET" >/dev/null 2>&1; then
+        return 0
+      fi
+      ;;
+    
+    curl)
+      # HTTP/HTTPS check using curl - may be blocked by providers
+      if [ -z "$CHECK_TARGET" ]; then
+        CHECK_TARGET="http://captive.apple.com/hotspot-detect.html"
+      fi
+      if command -v curl >/dev/null 2>&1; then
+        if curl --interface "$iface" --connect-timeout 5 --max-time 10 -s -f "$CHECK_TARGET" >/dev/null 2>&1; then
+          return 0
+        fi
+      fi
+      ;;
+    
+    *)
+      log "Unknown CHECK_METHOD: $CHECK_METHOD"
+      return 1
+      ;;
+  esac
+  
   return 1
 }
 

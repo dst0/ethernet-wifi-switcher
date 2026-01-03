@@ -10,6 +10,8 @@
 
 This tool automatically manages your Wi-Fi connection based on Ethernet availability across **macOS, Linux, and Windows**. It ensures that Wi-Fi is turned off when a stable Ethernet connection is detected and turned back on when Ethernet is disconnected.
 
+> **Note:** The macOS version is the most actively maintained and tested platform, as it's primarily used by the author. It provides the most reliable experience.
+
 ## 🚀 Quick Install (One-Liner)
 
 Choose your platform and run the command in your terminal:
@@ -160,34 +162,79 @@ $env:TIMEOUT=10; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows
 In addition to monitoring interface link status, you can optionally enable **Internet Connectivity Monitoring** to detect when an interface has an active connection but no actual internet access (e.g., captive portals, authentication required, upstream network issues).
 
 **What it does:**
-- Periodically checks actual internet connectivity by attempting to reach a test URL
+- Checks actual internet connectivity using one of three methods
 - If Ethernet has a connection but no internet, switches to Wi-Fi automatically
-- Uses lightweight HTTP requests to minimize overhead
-- Default check URL: `http://captive.apple.com/hotspot-detect.html` (Apple's captive portal detection endpoint)
+- Supports multiple ethernet or wifi interfaces with priority ordering
+
+**Check Methods:**
+
+1. **Ping to Gateway (Recommended - Default)**
+   - Most reliable and provider-safe option
+   - Pings the local network gateway (router)
+   - Works even with restrictive firewalls
+   - Minimal overhead (single ICMP packet)
+   - **Best for:** All scenarios, especially corporate/restricted networks
+
+2. **Ping to Domain/IP**
+   - Pings an external host (e.g., 8.8.8.8, 1.1.1.1)
+   - Verifies internet-wide connectivity
+   - May be blocked by some firewalls
+   - **Best for:** Home networks, unrestricted environments
+
+3. **HTTP/HTTPS Check (curl)**
+   - Makes HTTP request to a URL
+   - Can detect captive portals
+   - ⚠️ **WARNING:** May be blocked by:
+     - Corporate firewalls
+     - ISP content filtering
+     - Deep packet inspection systems
+     - Captive portals (ironically)
+   - **Best for:** Detecting captive portal states when other methods work
 
 **When to enable:**
 - **Corporate networks**: Networks that require authentication or have intermittent connectivity
 - **Public hotspots**: Environments with captive portals that may cause false "connected" states
 - **Unreliable ISPs**: When you need automatic failover to backup connectivity
 - **Multi-WAN setups**: When you have both wired and wireless internet sources
+- **Multiple interfaces**: Systems with 2+ ethernet or 2+ wifi adapters
 
 **Configuration options:**
 
 During installation, you will be prompted whether to enable internet monitoring:
 ```bash
 Enable internet monitoring? (y/N): y
+Select connectivity check method:
+  1) Ping to gateway (recommended - most reliable and provider-safe)
+  2) Ping to domain/IP address
+  3) HTTP/HTTPS check (curl) - May be blocked by ISP/firewall
+Enter choice [1]: 1
 Check interval in seconds [30]: 30
-Check URL [http://captive.apple.com/hotspot-detect.html]: 
 ```
 
 For non-interactive/automated installations, set environment variables:
 ```bash
-# macOS/Linux
-CHECK_INTERNET=1 CHECK_INTERVAL=30 CHECK_URL="http://captive.apple.com/hotspot-detect.html" sudo bash ./install-macos.sh
+# macOS/Linux - Gateway ping (recommended)
+CHECK_INTERNET=1 CHECK_METHOD=gateway CHECK_INTERVAL=30 sudo bash ./install-linux.sh
 
-# Windows
-$env:CHECK_INTERNET=1; $env:CHECK_INTERVAL=30; $env:CHECK_URL="http://captive.apple.com/hotspot-detect.html"; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
+# macOS/Linux - Ping to 8.8.8.8
+CHECK_INTERNET=1 CHECK_METHOD=ping CHECK_TARGET=8.8.8.8 CHECK_INTERVAL=30 sudo bash ./install-linux.sh
+
+# macOS/Linux - HTTP check
+CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_TARGET="http://captive.apple.com/hotspot-detect.html" CHECK_INTERVAL=30 sudo bash ./install-linux.sh
+
+# Windows examples
+$env:CHECK_INTERNET=1; $env:CHECK_METHOD="gateway"; $env:CHECK_INTERVAL=30; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
 ```
+
+**Multi-interface support:**
+
+To use multiple ethernet or wifi interfaces with priority ordering:
+```bash
+# Prioritize interfaces (comma-separated, highest priority first)
+INTERFACE_PRIORITY="eth0,eth1,wlan0" sudo bash ./install-linux.sh
+```
+
+The system will try interfaces in order until one with internet connectivity is found.
 
 **Platform-specific behavior:**
 - **Linux**: Periodic background checks every `CHECK_INTERVAL` seconds (default: 30s)
@@ -195,8 +242,9 @@ $env:CHECK_INTERNET=1; $env:CHECK_INTERVAL=30; $env:CHECK_URL="http://captive.ap
 - **Windows**: Periodic timer-based checks every `CHECK_INTERVAL` seconds (default: 30s)
 
 **Recommended settings:**
-- Check interval: 30-60 seconds (balance between responsiveness and overhead)
-- Check URL: Use a reliable, lightweight endpoint (captive.apple.com, detectportal.firefox.com, or connectivitycheck.gstatic.com)
+- **Check method:** Gateway ping (safest, works everywhere)
+- **Check interval:** 30-60 seconds (balance between responsiveness and overhead)
+- **Alternative targets:** For ping method: 8.8.8.8, 1.1.1.1, or your preferred DNS
 
 **Note:** This feature is **disabled by default** to maintain backward compatibility and minimize overhead for users who don't need it.
 

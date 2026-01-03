@@ -147,14 +147,55 @@ function Install {
         $checkInternetInput = Read-Host "Enable internet monitoring? (y/N)"
         if ($checkInternetInput -eq "y" -or $checkInternetInput -eq "Y") {
             $checkInternet = 1
+            
+            Write-Host ""
+            Write-Host "Select connectivity check method:"
+            Write-Host "  1) Ping to gateway (recommended - most reliable and provider-safe)"
+            Write-Host "  2) Ping to domain/IP address"
+            Write-Host "  3) HTTP/HTTPS check (curl) - May be blocked by ISP/firewall"
+            Write-Host ""
+            $checkMethodInput = Read-Host "Enter choice [1]"
+            $checkMethodChoice = if ($checkMethodInput) { [int]$checkMethodInput } else { 1 }
+            
+            switch ($checkMethodChoice) {
+                1 {
+                    $checkMethod = "gateway"
+                    $checkTarget = ""
+                    Write-Host "Using gateway ping (auto-detected per interface)"
+                }
+                2 {
+                    $checkMethod = "ping"
+                    $checkTargetInput = Read-Host "Enter domain/IP to ping [8.8.8.8]"
+                    $checkTarget = if ($checkTargetInput) { $checkTargetInput } else { "8.8.8.8" }
+                    Write-Host "Using ping to $checkTarget"
+                }
+                3 {
+                    $checkMethod = "curl"
+                    Write-Host ""
+                    Write-Host "⚠️  WARNING: HTTP/HTTPS checks may be blocked by:"
+                    Write-Host "   - Corporate firewalls"
+                    Write-Host "   - ISP content filtering"
+                    Write-Host "   - Captive portals (ironically)"
+                    Write-Host "   - Deep packet inspection systems"
+                    Write-Host ""
+                    $checkTargetInput = Read-Host "Enter URL to check [http://captive.apple.com/hotspot-detect.html]"
+                    $checkTarget = if ($checkTargetInput) { $checkTargetInput } else { "http://captive.apple.com/hotspot-detect.html" }
+                    Write-Host "Using HTTP check to $checkTarget"
+                }
+                default {
+                    Write-Host "Invalid choice, using gateway ping (default)"
+                    $checkMethod = "gateway"
+                    $checkTarget = ""
+                }
+            }
+            
             $checkIntervalInput = Read-Host "Check interval in seconds [30]"
             $checkInterval = if ($checkIntervalInput) { [int]$checkIntervalInput } else { 30 }
-            $checkUrlInput = Read-Host "Check URL [http://captive.apple.com/hotspot-detect.html]"
-            $checkUrl = if ($checkUrlInput) { $checkUrlInput } else { "http://captive.apple.com/hotspot-detect.html" }
         } else {
             $checkInternet = 0
             $checkInterval = 30
-            $checkUrl = "http://captive.apple.com/hotspot-detect.html"
+            $checkMethod = "gateway"
+            $checkTarget = ""
         }
     } else {
         $ethInput = if ($envEth) { $envEth } else { $autoEth }
@@ -162,7 +203,8 @@ function Install {
         $timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }
         $checkInternet = if ($env:CHECK_INTERNET) { [int]$env:CHECK_INTERNET } else { 0 }
         $checkInterval = if ($env:CHECK_INTERVAL) { [int]$env:CHECK_INTERVAL } else { 30 }
-        $checkUrl = if ($env:CHECK_URL) { $env:CHECK_URL } else { "http://captive.apple.com/hotspot-detect.html" }
+        $checkMethod = if ($env:CHECK_METHOD) { $env:CHECK_METHOD } else { "gateway" }
+        $checkTarget = if ($env:CHECK_TARGET) { $env:CHECK_TARGET } else { "" }
     }
 
     if ([string]::IsNullOrWhiteSpace($ethInput) -or [string]::IsNullOrWhiteSpace($wifiInput) -or $ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
@@ -180,8 +222,11 @@ function Install {
     Write-Host "  Timeout:  $($timeout)s"
     Write-Host "  Check Internet: $checkInternet"
     if ($checkInternet -eq 1) {
+        Write-Host "  Check Method: $checkMethod"
+        if ($checkTarget) {
+            Write-Host "  Check Target: $checkTarget"
+        }
         Write-Host "  Check Interval: $($checkInterval)s"
-        Write-Host "  Check URL: $checkUrl"
     }
     Write-Host ""
 
@@ -215,7 +260,7 @@ function Install {
 
     # Set environment variable for the task using XML modification
     $taskXml = Export-ScheduledTask -TaskName $TaskName
-    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERNET</Name>`n        <Value>$checkInternet</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERVAL</Name>`n        <Value>$checkInterval</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_URL</Name>`n        <Value>$checkUrl</Value>`n      </Variable>`n    </EnvironmentVariables>"
+    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERNET</Name>`n        <Value>$checkInternet</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERVAL</Name>`n        <Value>$checkInterval</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_METHOD</Name>`n        <Value>$checkMethod</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_TARGET</Name>`n        <Value>$checkTarget</Value>`n      </Variable>`n    </EnvironmentVariables>"
     $taskXml | Register-ScheduledTask -TaskName $TaskName -Force | Out-Null
 
     Start-ScheduledTask -TaskName $TaskName
