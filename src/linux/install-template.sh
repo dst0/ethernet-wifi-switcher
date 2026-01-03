@@ -165,9 +165,21 @@ install() {
         printf "Enter Wi-Fi interface [%s]: " "$WIFI_PROMPT"
         read -r input_wifi
         WIFI_DEV=${input_wifi:-$AUTO_WIFI}
+
+        echo ""
+        echo "DHCP Timeout Configuration:"
+        echo "  When ethernet connects, the interface becomes active but may not"
+        echo "  have an IP address yet (DHCP negotiation in progress)."
+        echo "  This timeout controls how long to wait for IP acquisition."
+        echo "  Increase for slow routers/DHCP servers (typical: 3-10 seconds)."
+        echo ""
+        printf "Enter DHCP timeout in seconds [7]: "
+        read -r input_timeout
+        TIMEOUT=${input_timeout:-7}
     else
         ETH_DEV="$AUTO_ETH"
         WIFI_DEV="$AUTO_WIFI"
+        TIMEOUT="${TIMEOUT:-7}"
     fi
 
     if [ -z "$ETH_DEV" ] || [ -z "$WIFI_DEV" ]; then
@@ -177,6 +189,10 @@ install() {
 
     echo "Installation directory: $INSTALL_DIR"
     echo ""
+    echo "Using configuration:"
+    echo "  Ethernet: $ETH_DEV"
+    echo "  Wi-Fi:    $WIFI_DEV"
+    echo "  Timeout:  ${TIMEOUT}s"
 
     mkdir -p "$INSTALL_DIR"
 
@@ -199,6 +215,7 @@ After=network.target
 
 [Service]
 ExecStart=$INSTALL_DIR/eth-wifi-auto.sh
+Environment="TIMEOUT=$TIMEOUT"
 Restart=always
 RestartSec=5
 

@@ -22,15 +22,65 @@ This application is designed to optimize energy efficiency and minimize the user
   - **macOS**: Uses `SCDynamicStore` (Native Swift).
   - **Linux**: Uses `nmcli monitor` (NetworkManager).
   - **Windows**: Uses `CIM Indication Events` (PowerShell).
-- **Automatic Interface Detection**: Identifies network interfaces automatically, with an option to manually override during installation.
+- **Intelligent Interface Detection**: Automatically identifies and prioritizes network interfaces with active IP addresses.
+- **Smart State Tracking**: Persistent state management enables instant Wi-Fi activation on disconnect and retry logic only when connecting.
+- **Configurable Timeout**: Adjustable IP acquisition timeout (default 7s) via `TIMEOUT` environment variable for slow routers.
+- **Universal Linux Support**: Fallback detection using `nmcli` → `ip` command → `/sys/class/net` for maximum compatibility.
 - **Zero CPU Idle Usage**: All implementations sleep until the system notifies them of a network change.
+- **POSIX Compliant**: Shell scripts work across different shells and minimal Linux distributions.
 
 ## How it Works
 
 ### Interface Detection
-The script identifies the correct network interfaces automatically on all platforms using native system tools (`networksetup` on Mac, `nmcli` on Linux, `Get-NetAdapter` on Windows).
+The scripts automatically identify network interfaces using native system tools:
+- **macOS**: `networksetup` with IP address filtering via `ipconfig`
+- **Linux**: Multi-tier detection (NetworkManager, `ip` command, or `/sys/class/net`)
+- **Windows**: `Get-NetAdapter` with IP address filtering via `Get-NetIPAddress`
 
-### Switching Logic
+Interfaces are prioritized by active IP address presence to ensure reliable detection.
+
+### State Tracking & Retry Logic
+The system maintains a persistent state file to track ethernet connection status:
+- **Connected → Disconnected**: Wi-Fi enabled immediately (no delay)
+- **Disconnected → Connected**: Polls every 1 second up to configurable timeout waiting for IP address acquisition
+- Logs when interface is active but no IP assigned yet (helpful for DHCP debugging)
+
+### DHCP Timeout Configuration
+The timeout parameter controls how long to wait for IP address acquisition when ethernet connects:
+
+**What it does:**
+- When ethernet is plugged in, the interface becomes active immediately
+- However, obtaining an IP address via DHCP takes additional time (typically 2-7 seconds)
+- The script polls every 1 second until either an IP is acquired or the timeout is reached
+- If no IP is obtained within the timeout, Wi-Fi stays enabled
+
+**When to adjust:**
+- **Slow DHCP servers**: Some routers/networks take 10+ seconds to assign IPs
+- **Enterprise networks**: Corporate networks with authentication may need longer timeouts
+- **Fast networks**: Home networks with modern routers typically work fine with default 7s
+
+**Configuration options:**
+
+During installation (interactive prompt):
+```bash
+DHCP timeout in seconds [7]: 10
+```
+
+Via environment variable (non-interactive):
+```bash
+# macOS/Linux
+TIMEOUT=10 sudo bash ./install-macos.sh
+
+# Windows
+$env:TIMEOUT=10; .\install-windows.ps1
+```
+
+**Recommended values:**
+- Fast home network: 5 seconds
+- Normal network: 7 seconds (default)
+- Slow/enterprise network: 10-15 seconds
+
+### Event-Driven Architecture
 The app remains idle and consumes zero CPU cycles until a network event is triggered by the OS.
 
 ## ⚠️ Important Requirement

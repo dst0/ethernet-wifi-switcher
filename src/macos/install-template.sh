@@ -144,15 +144,28 @@ detect_interfaces() {
         printf "Enter Ethernet interface [%s]: " "$ETH_PROMPT"
         read -r input_eth
         ETH_DEV=${input_eth:-$AUTO_ETH}
+
+        echo ""
+        echo "DHCP Timeout Configuration:"
+        echo "  When ethernet connects, the interface becomes active but may not"
+        echo "  have an IP address yet (DHCP negotiation in progress)."
+        echo "  This timeout controls how long to wait for IP acquisition."
+        echo "  Increase for slow routers/DHCP servers (typical: 3-10 seconds)."
+        echo ""
+        printf "Enter DHCP timeout in seconds [7]: "
+        read -r input_timeout
+        TIMEOUT=${input_timeout:-7}
     else
         WIFI_DEV="$AUTO_WIFI"
         ETH_DEV="$AUTO_ETH"
+        TIMEOUT="${TIMEOUT:-7}"
     fi
 
     echo ""
-    echo "Using interfaces:"
+    echo "Using configuration:"
     echo "  Wi-Fi:    ${WIFI_DEV:-not found}"
     echo "  Ethernet: ${ETH_DEV:-not found}"
+    echo "  Timeout:  ${TIMEOUT}s"
 
     if [ -z "$WIFI_DEV" ] || [ -z "$ETH_DEV" ]; then
         die "Both Wi-Fi and Ethernet interfaces must be specified to continue."
@@ -281,6 +294,7 @@ main(){
   sed -i '' "s|WIFI_DEV=\"\${WIFI_DEV:-en0}\"|WIFI_DEV=\"$WIFI_DEV\"|g" "$WORK_HELPER"
   sed -i '' "s|ETH_DEV=\"\${ETH_DEV:-en5}\"|ETH_DEV=\"$ETH_DEV\"|g" "$WORK_HELPER"
   sed -i '' "s|STATE_DIR=\"\${STATE_DIR:-/tmp}\"|STATE_DIR=\"$STATE_DIR\"|g" "$WORK_HELPER"
+  sed -i '' "s|TIMEOUT=\"\${TIMEOUT:-7}\"|TIMEOUT=\"$TIMEOUT\"|g" "$WORK_HELPER"
   chmod +x "$WORK_HELPER"
 
   echo "Extracting watcher binary..."

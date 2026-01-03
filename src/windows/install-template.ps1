@@ -119,9 +119,20 @@ function Install {
 
         $wifiInput = Read-Host "Wi-Fi interface [$autoWifi]"
         if (-not $wifiInput) { $wifiInput = $autoWifi }
+
+        Write-Host ""
+        Write-Host "DHCP Timeout Configuration:"
+        Write-Host "  When ethernet connects, the adapter becomes active but may not"
+        Write-Host "  have an IP address yet (DHCP negotiation in progress)."
+        Write-Host "  This timeout controls how long to wait for IP acquisition."
+        Write-Host "  Increase for slow routers/DHCP servers (typical: 3-10 seconds)."
+        Write-Host ""
+        $timeoutInput = Read-Host "DHCP timeout in seconds [7]"
+        $timeout = if ($timeoutInput) { [int]$timeoutInput } else { if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 } }
     } else {
         $ethInput = $autoEth
         $wifiInput = $autoWifi
+        $timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }
     }
 
     if ($ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
@@ -132,6 +143,11 @@ function Install {
     $SwitcherPath = "$InstallDir\eth-wifi-auto.ps1"
 
     Write-Host "Installation directory: $InstallDir"
+    Write-Host ""
+    Write-Host "Using configuration:"
+    Write-Host "  Ethernet: $ethInput"
+    Write-Host "  Wi-Fi:    $wifiInput"
+    Write-Host "  Timeout:  $($timeout)s"
     Write-Host ""
 
     if (-not (Test-Path $InstallDir)) {
@@ -148,7 +164,7 @@ function Install {
     [System.IO.File]::WriteAllBytes($UninstallerPath, $uninstallerBytes)
 
     # Create Scheduled Task
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SwitcherPath`""
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& { `$env:TIMEOUT=$timeout; & '$SwitcherPath' }`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 365)
