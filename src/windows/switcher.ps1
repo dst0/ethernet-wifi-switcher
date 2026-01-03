@@ -63,7 +63,7 @@ function Set-WifiSoftState {
 
 function Test-WifiNeedsEnable {
     param([object]$Adapter)
-    return ($null -ne $Adapter -and ($Adapter.Status -eq "Disabled" -or $Adapter.Status -eq "Down"))
+    return ($null -ne $Adapter -and ($Adapter.Status -eq "Disabled" -or $Adapter.Status -eq "Down" -or $Adapter.Status -eq "Disconnected"))
 }
 
 function Test-EthernetConnected {

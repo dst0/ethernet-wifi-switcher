@@ -36,6 +36,7 @@ if ($InstallDir) {
     $installPath = [System.IO.Path]::GetFullPath($InstallDir)
     $relative = [System.IO.Path]::GetRelativePath($installPath, $originalPath)
     $isInside = (-not [string]::IsNullOrEmpty($relative)) -and (-not $relative.StartsWith("..", [System.StringComparison]::OrdinalIgnoreCase))
+    # Avoid deleting the current working directory during uninstall by moving away if inside install path
     if ($isInside) {
         Set-Location $env:TEMP
     }
