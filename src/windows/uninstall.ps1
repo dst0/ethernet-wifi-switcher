@@ -2,7 +2,7 @@
 
 $TaskName = "EthWifiAutoSwitcher"
 $DefaultInstallDir = "$env:ProgramFiles\EthWifiAuto"
-$LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { "$env:TEMP\\EthWifiAuto" }
+$LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { Join-Path $env:TEMP "EthWifiAuto" }
 
 Write-Host "Uninstalling Ethernet/Wi-Fi Auto Switcher..."
 

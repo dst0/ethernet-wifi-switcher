@@ -135,12 +135,12 @@ function Check-And-Switch {
     if ($currentState -eq "connected") {
         if ($wifi.Status -ne "Disabled") {
             Log-Message "Ethernet connected ($($eth.Name)). Disabling Wi-Fi..."
-            Set-WifiSoftState -Adapter $wifi -Enable:$false
+            Set-WifiSoftState -Adapter $wifi -Enable $false
         }
     } else {
         if ($wifi.Status -eq "Disabled" -or $wifi.Status -eq "Down") {
             Log-Message "Ethernet disconnected ($($eth.Name)). Enabling Wi-Fi..."
-            Set-WifiSoftState -Adapter $wifi -Enable:$true
+            Set-WifiSoftState -Adapter $wifi -Enable $true
         }
     }
 }
