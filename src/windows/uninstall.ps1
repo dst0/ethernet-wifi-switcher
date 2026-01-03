@@ -39,6 +39,7 @@ if (Test-Path $InstallDir) {
     try {
         Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction Stop
     } catch {
+        # Brief pause allows helper processes to release file handles before retrying
         Start-Sleep -Milliseconds 200
         Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
     }
