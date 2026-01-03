@@ -51,13 +51,23 @@ function Set-WifiSoftState {
 
     if ($null -eq $Adapter) { return }
 
+    if ($Adapter.Name -notmatch '^[\\w .-]+$') {
+        Log-Message "Wi-Fi adapter name contains unsupported characters: '$($Adapter.Name)'"
+        return
+    }
+
     $target = if ($Enable) { "ENABLED" } else { "DISABLED" }
-    $adapterName = $Adapter.Name -replace '"', '\"'
+    $adapterName = $Adapter.Name
     $output = & netsh interface set interface name="$adapterName" admin=$target 2>&1
 
     if ($LASTEXITCODE -ne 0) {
         Log-Message "Failed to set Wi-Fi $target: $output"
     }
+}
+
+function Test-WifiNeedsEnable {
+    param([object]$Adapter)
+    return ($null -ne $Adapter -and ($Adapter.Status -eq "Disabled" -or $Adapter.Status -eq "Down"))
 }
 
 function Test-EthernetConnected {
@@ -118,7 +128,7 @@ function Check-And-Switch {
     if ($lastState -eq "connected" -and $currentState -eq "disconnected") {
         Log-Message "Ethernet disconnected, enabling Wi-Fi immediately"
         Write-State "disconnected"
-        if ($wifi.Status -eq "Disabled" -or $wifi.Status -eq "Down") {
+        if (Test-WifiNeedsEnable -Adapter $wifi) {
             Set-WifiSoftState -Adapter $wifi -Enable $true
         }
         return
@@ -141,7 +151,7 @@ function Check-And-Switch {
             Set-WifiSoftState -Adapter $wifi -Enable $false
         }
     } else {
-        if ($wifi.Status -eq "Disabled" -or $wifi.Status -eq "Down") {
+        if (Test-WifiNeedsEnable -Adapter $wifi) {
             Log-Message "Ethernet disconnected ($($eth.Name)). Enabling Wi-Fi..."
             Set-WifiSoftState -Adapter $wifi -Enable $true
         }

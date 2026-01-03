@@ -31,8 +31,12 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
 Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*eth-wifi-auto.ps1*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 $originalLocation = Get-Location
-if ($InstallDir -and ($originalLocation.Path -like "$InstallDir*")) {
-    Set-Location $env:TEMP
+if ($InstallDir) {
+    $originalPath = [System.IO.Path]::GetFullPath($originalLocation.Path)
+    $installPath = [System.IO.Path]::GetFullPath($InstallDir)
+    if ($originalPath.StartsWith($installPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Set-Location $env:TEMP
+    }
 }
 
 if (Test-Path $InstallDir) {
