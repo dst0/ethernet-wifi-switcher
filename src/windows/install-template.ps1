@@ -141,7 +141,7 @@ function Install {
         $timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }
     }
 
-    if (-not $ethInput -or -not $wifiInput -or $ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
+    if ([string]::IsNullOrWhiteSpace($ethInput) -or [string]::IsNullOrWhiteSpace($wifiInput) -or $ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
         Write-Error "Both Ethernet and Wi-Fi interfaces must be detected or specified."
         return
     }
