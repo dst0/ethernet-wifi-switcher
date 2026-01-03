@@ -190,10 +190,35 @@ install() {
         printf "Enter DHCP timeout in seconds [7]: "
         read -r input_timeout
         TIMEOUT=${input_timeout:-7}
+
+        echo ""
+        echo "Internet Connectivity Monitoring (Optional):"
+        echo "  Enable this to monitor actual internet availability, not just link status."
+        echo "  The system will switch to WiFi if Ethernet has no internet access."
+        echo "  Note: This adds periodic connectivity checks (default: every 30 seconds)."
+        echo ""
+        printf "Enable internet monitoring? (y/N): "
+        read -r input_check_internet
+        if [ "$input_check_internet" = "y" ] || [ "$input_check_internet" = "Y" ]; then
+            CHECK_INTERNET=1
+            printf "Enter check interval in seconds [30]: "
+            read -r input_check_interval
+            CHECK_INTERVAL=${input_check_interval:-30}
+            printf "Enter check URL [http://captive.apple.com/hotspot-detect.html]: "
+            read -r input_check_url
+            CHECK_URL=${input_check_url:-http://captive.apple.com/hotspot-detect.html}
+        else
+            CHECK_INTERNET=0
+            CHECK_INTERVAL=30
+            CHECK_URL="http://captive.apple.com/hotspot-detect.html"
+        fi
     else
         ETH_DEV="$AUTO_ETH"
         WIFI_DEV="$AUTO_WIFI"
         TIMEOUT="${TIMEOUT:-7}"
+        CHECK_INTERNET="${CHECK_INTERNET:-0}"
+        CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
+        CHECK_URL="${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}"
     fi
 
     if [ -z "$ETH_DEV" ] || [ -z "$WIFI_DEV" ]; then
@@ -207,6 +232,11 @@ install() {
     echo "  Ethernet: $ETH_DEV"
     echo "  Wi-Fi:    $WIFI_DEV"
     echo "  Timeout:  ${TIMEOUT}s"
+    echo "  Check Internet: $CHECK_INTERNET"
+    if [ "$CHECK_INTERNET" = "1" ]; then
+        echo "  Check Interval: ${CHECK_INTERVAL}s"
+        echo "  Check URL: $CHECK_URL"
+    fi
 
     mkdir -p "$INSTALL_DIR"
 
@@ -230,6 +260,9 @@ After=network.target
 [Service]
 ExecStart=$INSTALL_DIR/eth-wifi-auto.sh
 Environment="TIMEOUT=$TIMEOUT"
+Environment="CHECK_INTERNET=$CHECK_INTERNET"
+Environment="CHECK_INTERVAL=$CHECK_INTERVAL"
+Environment="CHECK_URL=$CHECK_URL"
 Restart=always
 RestartSec=5
 

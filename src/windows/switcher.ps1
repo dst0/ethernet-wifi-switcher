@@ -3,6 +3,9 @@
 
 $StateFile = "$env:TEMP\eth-wifi-state.txt"
 $Timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }
+$CheckInternet = if ($env:CHECK_INTERNET) { [int]$env:CHECK_INTERNET } else { 0 }
+$CheckInterval = if ($env:CHECK_INTERVAL) { [int]$env:CHECK_INTERVAL } else { 30 }
+$CheckUrl = if ($env:CHECK_URL) { $env:CHECK_URL } else { "http://captive.apple.com/hotspot-detect.html" }
 $LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { Split-Path $StateFile }
 $LogFile = Join-Path $LogDir "switcher.log"
 
@@ -104,6 +107,23 @@ function Test-EthernetConnectedWithRetry {
     return $false
 }
 
+function Test-InternetConnectivity {
+    param([object]$Adapter)
+    
+    if ($null -eq $Adapter) {
+        return $false
+    }
+
+    try {
+        # Try to reach the check URL using the specific network adapter
+        $response = Invoke-WebRequest -Uri $CheckUrl -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+        return ($response.StatusCode -eq 200)
+    } catch {
+        Log-Message "Internet check failed on $($Adapter.Name): $_"
+        return $false
+    }
+}
+
 function Check-And-Switch {
     $eth = Get-EthernetAdapter
     $wifi = Get-WifiAdapter
@@ -138,6 +158,15 @@ function Check-And-Switch {
         }
     }
 
+    # If internet checking is enabled, verify actual internet connectivity
+    if ($CheckInternet -eq 1 -and $currentState -eq "connected") {
+        Log-Message "Checking internet connectivity on $($eth.Name)..."
+        if (-not (Test-InternetConnectivity -Adapter $eth)) {
+            Log-Message "No internet on $($eth.Name), treating as disconnected"
+            $currentState = "disconnected"
+        }
+    }
+
     # Update state and manage wifi
     Write-State $currentState
 
@@ -155,8 +184,20 @@ function Check-And-Switch {
 }
 
 # Initial check
-Log-Message "Starting switcher (timeout ${Timeout}s)"
+Log-Message "Starting switcher (timeout ${Timeout}s, check_internet: $CheckInternet)"
 Check-And-Switch
+
+# Start periodic internet check if enabled
+if ($CheckInternet -eq 1) {
+    $timer = New-Object System.Timers.Timer
+    $timer.Interval = $CheckInterval * 1000
+    $timer.AutoReset = $true
+    Register-ObjectEvent -InputObject $timer -EventName Elapsed -Action {
+        Check-And-Switch
+    } | Out-Null
+    $timer.Start()
+    Log-Message "Started periodic internet checker (interval: ${CheckInterval}s)"
+}
 
 # Register for CIM events (Network Adapter status changes)
 $query = "SELECT * FROM MSFT_NetAdapter"
@@ -171,4 +212,8 @@ try {
     }
 } finally {
     Unregister-Event -SourceIdentifier "NetAdapterChange"
+    if ($CheckInternet -eq 1 -and $timer) {
+        $timer.Stop()
+        $timer.Dispose()
+    }
 }

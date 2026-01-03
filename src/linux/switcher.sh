@@ -6,6 +6,10 @@ set -eu
 
 STATE_FILE="${STATE_FILE:-/tmp/eth-wifi-state}"
 TIMEOUT="${TIMEOUT:-7}"
+CHECK_INTERNET="${CHECK_INTERNET:-0}"
+CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
+CHECK_URL="${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}"
+INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -30,6 +34,27 @@ get_eth_dev() {
 
 get_wifi_dev() {
     nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1
+}
+
+get_all_network_devs() {
+    # Get all ethernet and wifi devices, excluding loopback
+    nmcli device | grep -E "(ethernet|wifi)" | awk '{print $1}'
+}
+
+check_internet() {
+    iface="$1"
+    # Check if interface has internet connectivity using curl with interface binding
+    # Use quick timeout and retry to minimize delay
+    if command -v curl >/dev/null 2>&1; then
+        if curl --interface "$iface" --connect-timeout 5 --max-time 10 -s -f "$CHECK_URL" >/dev/null 2>&1; then
+            return 0
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget --bind-address=$(nmcli -t -f IP4.ADDRESS device show "$iface" | cut -d: -f2 | cut -d/ -f1 | head -n 1) --timeout=10 --tries=1 -q -O /dev/null "$CHECK_URL" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 eth_is_connecting() {
@@ -108,6 +133,15 @@ check_and_switch() {
         fi
     fi
 
+    # If internet checking is enabled, verify actual internet connectivity
+    if [ "$CHECK_INTERNET" = "1" ] && [ "$current_state" = "connected" ]; then
+        log "Checking internet connectivity on $eth_dev..."
+        if ! check_internet "$eth_dev"; then
+            log "No internet on $eth_dev, treating as disconnected"
+            current_state="disconnected"
+        fi
+    fi
+
     # Update state and manage wifi
     write_state "$current_state"
 
@@ -128,6 +162,18 @@ check_and_switch() {
 
 # Initial check
 check_and_switch
+
+# Start periodic internet check in background if enabled
+if [ "$CHECK_INTERNET" = "1" ]; then
+    (
+        while true; do
+            sleep "$CHECK_INTERVAL"
+            check_and_switch
+        done
+    ) &
+    CHECKER_PID=$!
+    log "Started periodic internet checker (PID: $CHECKER_PID, interval: ${CHECK_INTERVAL}s)"
+fi
 
 # Monitor events
 log "Starting event monitor..."

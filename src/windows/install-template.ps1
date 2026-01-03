@@ -137,10 +137,32 @@ function Install {
         Write-Host ""
         $timeoutInput = Read-Host "DHCP timeout in seconds [7]"
         $timeout = if ($timeoutInput) { [int]$timeoutInput } else { if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 } }
+
+        Write-Host ""
+        Write-Host "Internet Connectivity Monitoring (Optional):"
+        Write-Host "  Enable this to monitor actual internet availability, not just link status."
+        Write-Host "  The system will switch to WiFi if Ethernet has no internet access."
+        Write-Host "  Note: This adds periodic connectivity checks (default: every 30 seconds)."
+        Write-Host ""
+        $checkInternetInput = Read-Host "Enable internet monitoring? (y/N)"
+        if ($checkInternetInput -eq "y" -or $checkInternetInput -eq "Y") {
+            $checkInternet = 1
+            $checkIntervalInput = Read-Host "Check interval in seconds [30]"
+            $checkInterval = if ($checkIntervalInput) { [int]$checkIntervalInput } else { 30 }
+            $checkUrlInput = Read-Host "Check URL [http://captive.apple.com/hotspot-detect.html]"
+            $checkUrl = if ($checkUrlInput) { $checkUrlInput } else { "http://captive.apple.com/hotspot-detect.html" }
+        } else {
+            $checkInternet = 0
+            $checkInterval = 30
+            $checkUrl = "http://captive.apple.com/hotspot-detect.html"
+        }
     } else {
         $ethInput = if ($envEth) { $envEth } else { $autoEth }
         $wifiInput = if ($envWifi) { $envWifi } else { $autoWifi }
         $timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }
+        $checkInternet = if ($env:CHECK_INTERNET) { [int]$env:CHECK_INTERNET } else { 0 }
+        $checkInterval = if ($env:CHECK_INTERVAL) { [int]$env:CHECK_INTERVAL } else { 30 }
+        $checkUrl = if ($env:CHECK_URL) { $env:CHECK_URL } else { "http://captive.apple.com/hotspot-detect.html" }
     }
 
     if ([string]::IsNullOrWhiteSpace($ethInput) -or [string]::IsNullOrWhiteSpace($wifiInput) -or $ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
@@ -156,6 +178,11 @@ function Install {
     Write-Host "  Ethernet: $ethInput"
     Write-Host "  Wi-Fi:    $wifiInput"
     Write-Host "  Timeout:  $($timeout)s"
+    Write-Host "  Check Internet: $checkInternet"
+    if ($checkInternet -eq 1) {
+        Write-Host "  Check Interval: $($checkInterval)s"
+        Write-Host "  Check URL: $checkUrl"
+    }
     Write-Host ""
 
     if (-not (Test-Path $InstallDir)) {
@@ -188,7 +215,7 @@ function Install {
 
     # Set environment variable for the task using XML modification
     $taskXml = Export-ScheduledTask -TaskName $TaskName
-    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n    </EnvironmentVariables>"
+    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERNET</Name>`n        <Value>$checkInternet</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERVAL</Name>`n        <Value>$checkInterval</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_URL</Name>`n        <Value>$checkUrl</Value>`n      </Variable>`n    </EnvironmentVariables>"
     $taskXml | Register-ScheduledTask -TaskName $TaskName -Force | Out-Null
 
     Start-ScheduledTask -TaskName $TaskName

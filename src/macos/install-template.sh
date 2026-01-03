@@ -163,10 +163,30 @@ detect_interfaces() {
         printf "Enter DHCP timeout in seconds [7]: "
         read -r input_timeout
         TIMEOUT=${input_timeout:-7}
+
+        echo ""
+        echo "Internet Connectivity Monitoring (Optional):"
+        echo "  Enable this to monitor actual internet availability, not just link status."
+        echo "  The system will switch to WiFi if Ethernet has no internet access."
+        echo "  Note: Checking is done when network events occur (no periodic polling on macOS)."
+        echo ""
+        printf "Enable internet monitoring? (y/N): "
+        read -r input_check_internet
+        if [ "$input_check_internet" = "y" ] || [ "$input_check_internet" = "Y" ]; then
+            CHECK_INTERNET=1
+            printf "Enter check URL [http://captive.apple.com/hotspot-detect.html]: "
+            read -r input_check_url
+            CHECK_URL=${input_check_url:-http://captive.apple.com/hotspot-detect.html}
+        else
+            CHECK_INTERNET=0
+            CHECK_URL="http://captive.apple.com/hotspot-detect.html"
+        fi
     else
         WIFI_DEV="$AUTO_WIFI"
         ETH_DEV="$AUTO_ETH"
         TIMEOUT="${TIMEOUT:-7}"
+        CHECK_INTERNET="${CHECK_INTERNET:-0}"
+        CHECK_URL="${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}"
     fi
 
     echo ""
@@ -174,6 +194,10 @@ detect_interfaces() {
     echo "  Wi-Fi:    ${WIFI_DEV:-not found}"
     echo "  Ethernet: ${ETH_DEV:-not found}"
     echo "  Timeout:  ${TIMEOUT}s"
+    echo "  Check Internet: $CHECK_INTERNET"
+    if [ "$CHECK_INTERNET" = "1" ]; then
+        echo "  Check URL: $CHECK_URL"
+    fi
 
     if [ -z "$WIFI_DEV" ] || [ -z "$ETH_DEV" ]; then
         die "Both Wi-Fi and Ethernet interfaces must be specified to continue."
@@ -307,6 +331,8 @@ main(){
   sed -i '' "s|ETH_DEV=\"\${ETH_DEV:-en5}\"|ETH_DEV=\"$ETH_DEV\"|g" "$WORK_HELPER"
   sed -i '' "s|STATE_DIR=\"\${STATE_DIR:-/tmp}\"|STATE_DIR=\"$STATE_DIR\"|g" "$WORK_HELPER"
   sed -i '' "s|TIMEOUT=\"\${TIMEOUT:-7}\"|TIMEOUT=\"$TIMEOUT\"|g" "$WORK_HELPER"
+  sed -i '' "s|CHECK_INTERNET=\"\${CHECK_INTERNET:-0}\"|CHECK_INTERNET=\"$CHECK_INTERNET\"|g" "$WORK_HELPER"
+  sed -i '' "s|CHECK_URL=\"\${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}\"|CHECK_URL=\"$CHECK_URL\"|g" "$WORK_HELPER"
   chmod +x "$WORK_HELPER"
 
   echo "Extracting watcher binary..."

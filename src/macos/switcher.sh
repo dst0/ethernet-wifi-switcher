@@ -11,6 +11,8 @@ WIFI_DEV="${WIFI_DEV:-en0}"
 ETH_DEV="${ETH_DEV:-en5}"
 STATE_FILE="${STATE_FILE:-/tmp/eth-wifi-state}"
 TIMEOUT="${TIMEOUT:-7}"
+CHECK_INTERNET="${CHECK_INTERNET:-0}"
+CHECK_URL="${CHECK_URL:-http://captive.apple.com/hotspot-detect.html}"
 
 now(){ "$DATE" "+%Y-%m-%d %H:%M:%S"; }
 log(){ echo "[$(now)] $*"; }
@@ -74,6 +76,17 @@ eth_is_up_with_retry(){
   return 1
 }
 
+check_internet(){
+  iface="$1"
+  # Check if interface has internet connectivity using curl with interface binding
+  if command -v curl >/dev/null 2>&1; then
+    if curl --interface "$iface" --connect-timeout 5 --max-time 10 -s -f "$CHECK_URL" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
 main(){
   last_state=$(read_last_state)
 
@@ -99,6 +112,15 @@ main(){
     # Try with retry for new connection
     if eth_is_up_with_retry; then
       current_state="connected"
+    fi
+  fi
+
+  # If internet checking is enabled, verify actual internet connectivity
+  if [ "$CHECK_INTERNET" = "1" ] && [ "$current_state" = "connected" ]; then
+    log "Checking internet connectivity on $ETH_DEV..."
+    if ! check_internet "$ETH_DEV"; then
+      log "No internet on $ETH_DEV, treating as disconnected"
+      current_state="disconnected"
     fi
   fi
 
