@@ -1,10 +1,10 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # Build script for Windows installer
 # Bundles switcher and uninstaller into a single PowerShell script.
 
-SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 DIST_DIR="$(cd "$SRC_DIR/../../dist" && pwd)"
 
 echo "🪟 Building Windows installer..."

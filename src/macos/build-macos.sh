@@ -1,5 +1,5 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # macOS Build Script
 # Compiles Swift watcher and bundles everything into a self-contained installer.
@@ -11,7 +11,7 @@ TEMP_BIN="ethwifiauto-watch-universal"
 
 mkdir -p "$DIST_DIR"
 
-if ! command -v swiftc &> /dev/null; then
+if ! command -v swiftc > /dev/null 2>&1; then
     echo "⚠️ swiftc not found. Skipping macOS build."
     exit 0
 fi

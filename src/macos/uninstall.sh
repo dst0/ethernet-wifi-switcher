@@ -1,5 +1,5 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # These will be set by the installer
 SYS_PLIST_PATH="SYS_PLIST_PATH_PLACEHOLDER"

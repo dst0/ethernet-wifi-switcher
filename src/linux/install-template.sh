@@ -1,5 +1,5 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # Universal Ethernet/Wi-Fi Auto Switcher for Linux
 # This script is self-contained and includes the switcher logic and uninstaller.
@@ -12,7 +12,6 @@ SWITCHER_B64="__SWITCHER_B64__"
 UNINSTALLER_B64="__UNINSTALLER_B64__"
 
 stop_helper_processes() {
-    local helper_pids
     helper_pids=$(pgrep -f "eth-wifi-auto.sh" || true)
     if [ -n "$helper_pids" ]; then
         echo "Stopping helper processes..."
@@ -30,7 +29,7 @@ stop_helper_processes() {
 }
 
 install() {
-    if [ "$EUID" -ne 0 ]; then
+    if [ "$(id -u)" -ne 0 ]; then
         echo "Please run as root (sudo)"
         exit 1
     fi
@@ -46,7 +45,7 @@ install() {
 
         if [ -n "$OLD_INSTALL_DIR" ] && [ -f "$OLD_INSTALL_DIR/uninstall.sh" ]; then
             echo "  Running existing uninstaller..."
-            bash "$OLD_INSTALL_DIR/uninstall.sh" || true
+            sh "$OLD_INSTALL_DIR/uninstall.sh" || true
         else
             if [ -z "$OLD_INSTALL_DIR" ]; then
                 echo "  Install folder not found. Performing manual cleanup..."
@@ -64,8 +63,9 @@ install() {
     fi
 
     INSTALL_DIR="$DEFAULT_INSTALL_DIR"
-    if [[ -t 0 ]]; then
-        read -p "Enter installation directory [$DEFAULT_INSTALL_DIR]: " input_dir
+    if [ -t 0 ]; then
+        printf "Enter installation directory [%s]: " "$DEFAULT_INSTALL_DIR"
+        read -r input_dir
         INSTALL_DIR=${input_dir:-$DEFAULT_INSTALL_DIR}
     fi
 
@@ -74,25 +74,27 @@ install() {
     AUTO_ETH=$(nmcli device | grep -E "ethernet" | awk '{print $1}' | head -n 1 || true)
     AUTO_WIFI=$(nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1 || true)
 
-    if [[ -t 0 ]]; then
+    if [ -t 0 ]; then
         echo ""
         echo "Available network interfaces:"
         nmcli device
         echo ""
 
         ETH_PROMPT=${AUTO_ETH:-"Not set"}
-        read -p "Enter Ethernet interface [$ETH_PROMPT]: " input_eth
+        printf "Enter Ethernet interface [%s]: " "$ETH_PROMPT"
+        read -r input_eth
         ETH_DEV=${input_eth:-$AUTO_ETH}
 
         WIFI_PROMPT=${AUTO_WIFI:-"Not set"}
-        read -p "Enter Wi-Fi interface [$WIFI_PROMPT]: " input_wifi
+        printf "Enter Wi-Fi interface [%s]: " "$WIFI_PROMPT"
+        read -r input_wifi
         WIFI_DEV=${input_wifi:-$AUTO_WIFI}
     else
         ETH_DEV="$AUTO_ETH"
         WIFI_DEV="$AUTO_WIFI"
     fi
 
-    if [[ -z "$ETH_DEV" || -z "$WIFI_DEV" ]]; then
+    if [ -z "$ETH_DEV" ] || [ -z "$WIFI_DEV" ]; then
         echo "ERROR: Both Ethernet and Wi-Fi interfaces must be specified."
         exit 1
     fi
@@ -141,14 +143,14 @@ EOF
     echo "  • Continue working after OS reboot"
     echo ""
     echo "To uninstall, run:"
-    echo "  sudo bash \"$WORK_UNINSTALL\""
+    echo "  sudo sh \"$WORK_UNINSTALL\""
 }
 
 uninstall() {
-    echo "$UNINSTALLER_B64" | base64 -d | bash
+    echo "$UNINSTALLER_B64" | base64 -d | sh
 }
 
-if [[ "${1:-}" == "--uninstall" ]]; then
+if [ "${1:-}" = "--uninstall" ]; then
     uninstall
 else
     install

@@ -1,5 +1,5 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 SERVICE_NAME="eth-wifi-auto"
 DEFAULT_INSTALL_DIR="/usr/local/bin"
@@ -12,7 +12,7 @@ else
     INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 fi
 
-if [ "$EUID" -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ]; then
     echo "Please run as root (sudo)"
     exit 1
 fi

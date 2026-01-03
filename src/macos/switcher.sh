@@ -1,5 +1,5 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 NETWORKSETUP="/usr/sbin/networksetup"
 DATE="/bin/date"
@@ -17,15 +17,14 @@ wifi_is_on(){
 }
 
 set_wifi(){
-  local state="$1"
+  state="$1"
   "$NETWORKSETUP" -setairportpower "$WIFI_DEV" "$state"
 }
 
 eth_is_up(){
   # Ethernet is up if interface has an IP address
-  local ip
   ip="$($IPCONFIG getifaddr "$ETH_DEV" 2>/dev/null || true)"
-  [[ -n "$ip" ]]
+  [ -n "$ip" ]
 }
 
 main(){

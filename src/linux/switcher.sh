@@ -1,5 +1,5 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # Event-driven Ethernet/Wi-Fi switcher for Linux (NetworkManager)
 # Uses 'nmcli monitor' to wait for events, consuming 0% CPU while idle.
@@ -17,23 +17,23 @@ get_wifi_dev() {
 }
 
 check_and_switch() {
-    local eth_dev=$(get_eth_dev)
-    local wifi_dev=$(get_wifi_dev)
+    eth_dev=$(get_eth_dev)
+    wifi_dev=$(get_wifi_dev)
 
     if [ -z "$eth_dev" ] || [ -z "$wifi_dev" ]; then
         return
     fi
 
-    local eth_state=$(nmcli -t -f DEVICE,STATE device | grep "^$eth_dev:" | cut -d: -f2)
+    eth_state=$(nmcli -t -f DEVICE,STATE device | grep "^$eth_dev:" | cut -d: -f2)
 
     if [ "$eth_state" = "connected" ]; then
-        local wifi_enabled=$(nmcli radio wifi)
+        wifi_enabled=$(nmcli radio wifi)
         if [ "$wifi_enabled" = "enabled" ]; then
             log "Ethernet connected ($eth_dev). Disabling Wi-Fi..."
             nmcli radio wifi off
         fi
     else
-        local wifi_enabled=$(nmcli radio wifi)
+        wifi_enabled=$(nmcli radio wifi)
         if [ "$wifi_enabled" = "disabled" ]; then
             log "Ethernet disconnected ($eth_dev). Enabling Wi-Fi..."
             nmcli radio wifi on
