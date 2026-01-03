@@ -51,14 +51,10 @@ function Set-WifiSoftState {
 
     if ($null -eq $Adapter) { return }
 
-    if ($Adapter.Name -notmatch '^[\w .-]+$') {
-        Log-Message "Wi-Fi adapter name contains unsupported characters: '$($Adapter.Name)'"
-        return
-    }
-
     $target = if ($Enable) { "ENABLED" } else { "DISABLED" }
     $adapterName = $Adapter.Name
-    $output = & netsh interface set interface name="$adapterName" admin=$target 2>&1
+    $args = @("interface", "set", "interface", "name=$adapterName", "admin=$target")
+    $output = & netsh @args 2>&1
 
     if ($LASTEXITCODE -ne 0) {
         Log-Message "Failed to set Wi-Fi $target: $output"

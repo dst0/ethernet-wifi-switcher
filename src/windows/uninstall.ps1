@@ -34,7 +34,8 @@ $originalLocation = Get-Location
 if ($InstallDir) {
     $originalPath = [System.IO.Path]::GetFullPath($originalLocation.Path)
     $installPath = [System.IO.Path]::GetFullPath($InstallDir)
-    if ($originalPath.StartsWith($installPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $relative = [System.IO.Path]::GetRelativePath($installPath, $originalPath)
+    if ($relative -and -not $relative.StartsWith("..", [System.StringComparison]::OrdinalIgnoreCase)) {
         Set-Location $env:TEMP
     }
 }
