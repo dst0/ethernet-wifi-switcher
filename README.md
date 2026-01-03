@@ -10,6 +10,80 @@
 
 This tool automatically manages your Wi-Fi connection based on Ethernet availability across **macOS, Linux, and Windows**. It ensures that Wi-Fi is turned off when a stable Ethernet connection is detected and turned back on when Ethernet is disconnected.
 
+## 🚀 Quick Install (One-Liner)
+
+Choose your platform and run the command in your terminal:
+
+### macOS
+```bash
+curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-macos.sh | sudo bash
+```
+
+### Linux
+```bash
+curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-linux.sh | sudo bash
+```
+
+### Windows (PowerShell Admin)
+**Important:** Right-click PowerShell → "Run as administrator" before running this command.
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; curl -Uri https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-windows.ps1 -UseBasicParsing | iex
+```
+
+---
+
+## 📦 Downloads
+
+You can download the latest pre-packaged versions from the [Releases](https://github.com/dst0/ethernet-wifi-switcher/releases) page:
+
+- 🍎 **macOS**: [install-macos.sh](https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-macos.sh)
+- 🐧 **Linux**: [install-linux.sh](https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-linux.sh)
+- 🪟 **Windows**: [install-windows.ps1](https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-windows.ps1)
+
+## 🪟 Windows PowerShell Execution Policy
+
+By default, Windows blocks PowerShell script execution for security. **You must run PowerShell as Administrator** and use `-ExecutionPolicy Bypass` to install.
+
+**Quick Install (recommended):**
+
+1. **Open PowerShell as Administrator:**
+   - Press `Win + X` → Select "Windows PowerShell (Admin)" or "Terminal (Admin)"
+   - Or: Search "PowerShell" → Right-click → "Run as administrator"
+
+2. **Run the install command:**
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; curl -Uri https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-windows.ps1 -UseBasicParsing | iex
+```
+
+**What this does:**
+- ✅ Safe: Only affects the current PowerShell window
+- ✅ Temporary: Reverts when you close PowerShell
+- ✅ No permanent changes to your system security settings
+
+**After installation - the service will work automatically:**
+The scheduled task is configured with `-ExecutionPolicy Bypass` built into its command and runs as SYSTEM account. This means:
+- ✅ The background service runs automatically on login
+- ✅ Works on ALL systems regardless of execution policy settings
+- ✅ No manual intervention needed after installation
+- ✅ Survives reboots and continues working
+
+**Alternative: Download and run manually**
+
+If you prefer not to use the one-liner, download the script and run it:
+
+1. Download [install-windows.ps1](https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-windows.ps1)
+2. **Open PowerShell as Administrator** (see step 1 above)
+3. Navigate to the download folder: `cd ~/Downloads`
+4. Run:
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
+```
+
+**Note:** Do NOT double-click the .ps1 file - it will fail due to execution policy. Always run from PowerShell with `-ExecutionPolicy Bypass`.
+
+---
+
 ## Environmental and Health Impact
 
 This application is designed to optimize energy efficiency and minimize the user's exposure to non-ionizing electromagnetic radiation (EMF). By automating the deactivation of the Wi-Fi radio when a wired connection is available, the software:
@@ -61,18 +135,18 @@ The timeout parameter controls how long to wait for IP address acquisition when 
 
 **Configuration options:**
 
-During installation (interactive prompt):
+During installation, you will be prompted to enter the DHCP timeout or accept the default:
 ```bash
 DHCP timeout in seconds [7]: 10
 ```
 
-Via environment variable (non-interactive):
+For non-interactive/automated installations, you can set the timeout via environment variable:
 ```bash
 # macOS/Linux
 TIMEOUT=10 sudo bash ./install-macos.sh
 
 # Windows
-$env:TIMEOUT=10; .\install-windows.ps1
+$env:TIMEOUT=10; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
 ```
 
 **Recommended values:**
@@ -93,46 +167,7 @@ For this tool to work seamlessly, ensure that at least one of your Wi-Fi network
 
 If no network is set to auto-connect, the Wi-Fi interface will turn on but will not establish a connection until you manually select a network.
 
-## 🚀 Quick Install (One-Liner)
 
-Choose your platform and run the command in your terminal:
-
-### macOS
-```bash
-curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-macos.sh | sudo bash
-```
-
-### Linux
-```bash
-curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-linux.sh | sudo bash
-```
-
-### Windows (PowerShell Admin)
-```powershell
-iwr https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-windows.ps1 -useb | iex
-```
-
----
-
-## 📦 Downloads
-
-You can download the latest pre-packaged versions from the [Releases](https://github.com/dst0/ethernet-wifi-switcher/releases) page:
-
-- 🍎 **macOS**: [install-macos.sh](https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-macos.sh)
-- 🐧 **Linux**: [install-linux.sh](https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-linux.sh)
-- 🪟 **Windows**: [install-windows.ps1](https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-windows.ps1)
-
-## 🛡️ Security & Code Signing
-
-Since this is an open-source project provided as scripts and a pre-compiled binary, you should be aware of the following:
-
-### macOS
-The pre-compiled Swift watcher is **ad-hoc signed**. When you run the installer, macOS might show a "Developer cannot be verified" warning. The installer automatically attempts to bypass this using `codesign -s -`, but if you encounter issues, you can build from source locally to ensure the binary is signed with your own local identity.
-
-### Windows
-The PowerShell scripts are not digitally signed. To run the installer, you must use the `-ExecutionPolicy Bypass` flag (included in the quick install command). Windows may show a "SmartScreen" warning because the script is downloaded from the internet; you may need to click "Run anyway".
-
-### Linux
 No signing issues, but the installer requires `sudo` to create the `systemd` service and copy files to `/opt/eth-wifi-auto`.
 
 ## Building from Source
@@ -234,10 +269,14 @@ Uninstallation complete.
 
 ---
 
+
+1. Open PowerShell as Administrator
+2. Navigate to the build directory
+3. Run:
 ### 🪟 Windows (PowerShell Admin)
 **Install:**
 ```powershell
-.\dist\install-windows.ps1
+powershell.exe -ExecutionPolicy Bypass -File ".\dist\install-windows.ps1"
 ```
 Output:
 ```

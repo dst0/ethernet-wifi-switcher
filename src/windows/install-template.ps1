@@ -163,13 +163,20 @@ function Install {
     $uninstallerBytes = [System.Convert]::FromBase64String($UninstallerB64)
     [System.IO.File]::WriteAllBytes($UninstallerPath, $uninstallerBytes)
 
-    # Create Scheduled Task
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& { `$env:TIMEOUT=$timeout; & '$SwitcherPath' }`""
+    # Create Scheduled Task with environment variable
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SwitcherPath`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 365)
 
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    # Register task
+    $task = Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force
+
+    # Set environment variable for the task using XML modification
+    $taskXml = Export-ScheduledTask -TaskName $TaskName
+    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n    </EnvironmentVariables>"
+    $taskXml | Register-ScheduledTask -TaskName $TaskName -Force | Out-Null
+
     Start-ScheduledTask -TaskName $TaskName
 
     Write-Host ""
