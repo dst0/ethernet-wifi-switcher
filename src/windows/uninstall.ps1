@@ -36,7 +36,7 @@ if ($InstallDir) {
     $installPath = [System.IO.Path]::GetFullPath($InstallDir)
     $isInside = $false
     try {
-        if ([System.IO.Path]::GetRelativePath) {
+        if (([System.IO.Path]).GetMethod("GetRelativePath")) {
             $relative = [System.IO.Path]::GetRelativePath($installPath, $originalPath)
             $isInside = (-not [string]::IsNullOrEmpty($relative)) -and (-not $relative.StartsWith("..", [System.StringComparison]::OrdinalIgnoreCase))
         }
