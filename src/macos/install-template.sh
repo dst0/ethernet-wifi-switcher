@@ -64,9 +64,27 @@ detect_interfaces() {
     fi
 }
 
+cleanup_existing() {
+    if [[ -f "$SYS_PLIST_PATH" ]]; then
+        echo "Existing installation detected at $SYS_PLIST_PATH"
+        # Try to find the WorkingDirectory from the plist
+        OLD_WORKDIR=$(grep -A 1 "WorkingDirectory" "$SYS_PLIST_PATH" | grep "<string>" | sed 's|.*<string>\(.*\)</string>.*|\1|' || true)
+        
+        if [[ -n "$OLD_WORKDIR" && -f "$OLD_WORKDIR/uninstall.sh" ]]; then
+            echo "Running existing uninstaller from $OLD_WORKDIR..."
+            bash "$OLD_WORKDIR/uninstall.sh" || true
+        else
+            echo "No existing uninstaller found or could not determine workdir. Performing manual cleanup..."
+            launchctl bootout system "$SYS_PLIST_PATH" 2>/dev/null || true
+            rm -f "$SYS_PLIST_PATH" "$SYS_HELPER_PATH" "$SYS_WATCHER_BIN"
+        fi
+    fi
+}
+
 main(){
   need_macos
   ensure_root
+  cleanup_existing
   detect_interfaces
 
   if [[ "$WORKDIR" == "$DEFAULT_WORKDIR" && -n "${SUDO_USER:-}" ]]; then

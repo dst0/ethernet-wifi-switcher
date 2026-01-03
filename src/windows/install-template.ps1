@@ -14,6 +14,24 @@ function Install {
         return
     }
 
+    # Cleanup existing installation if found
+    $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($existingTask) {
+        Write-Host "Existing installation detected."
+        if ($existingTask.Actions[0].Arguments -match '-File "(.*)"') {
+            $OldSwitcherPath = $matches[1]
+            $OldInstallDir = Split-Path $OldSwitcherPath
+            $OldUninstaller = Join-Path $OldInstallDir "uninstall.ps1"
+            if (Test-Path $OldUninstaller) {
+                Write-Host "Running existing uninstaller from $OldInstallDir..."
+                powershell.exe -ExecutionPolicy Bypass -File "$OldUninstaller"
+            } else {
+                Write-Host "Performing manual cleanup of existing task..."
+                Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+            }
+        }
+    }
+
     $InstallDir = $DefaultInstallDir
     if ([Environment]::UserInteractive) {
         $userInput = Read-Host "Enter installation directory [$DefaultInstallDir]"
@@ -31,6 +49,11 @@ function Install {
     # Extract switcher
     $switcherBytes = [System.Convert]::FromBase64String($SwitcherB64)
     [System.IO.File]::WriteAllBytes($SwitcherPath, $switcherBytes)
+
+    # Extract uninstaller
+    $UninstallerPath = "$InstallDir\uninstall.ps1"
+    $uninstallerBytes = [System.Convert]::FromBase64String($UninstallerB64)
+    [System.IO.File]::WriteAllBytes($UninstallerPath, $uninstallerBytes)
 
     # Create Scheduled Task
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$SwitcherPath`""
