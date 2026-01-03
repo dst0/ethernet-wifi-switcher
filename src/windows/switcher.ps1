@@ -52,7 +52,8 @@ function Set-WifiSoftState {
     if ($null -eq $Adapter) { return }
 
     $target = if ($Enable) { "ENABLED" } else { "DISABLED" }
-    $output = & netsh interface set interface name="$($Adapter.Name)" admin=$target 2>&1
+    $adapterName = $Adapter.Name -replace '"', '\"'
+    $output = & netsh interface set interface name="$adapterName" admin=$target 2>&1
 
     if ($LASTEXITCODE -ne 0) {
         Log-Message "Failed to set Wi-Fi $target: $output"
@@ -102,7 +103,9 @@ function Check-And-Switch {
     $wifi = Get-WifiAdapter
 
     if ($null -eq $eth -or $null -eq $wifi) {
-        Log-Message "Missing adapters (Ethernet: $($eth?.Name), Wi-Fi: $($wifi?.Name)). Waiting..."
+        $ethName = if ($eth) { $eth.Name } else { "null" }
+        $wifiName = if ($wifi) { $wifi.Name } else { "null" }
+        Log-Message "Missing adapters (Ethernet: $ethName, Wi-Fi: $wifiName). Waiting..."
         return
     }
 
