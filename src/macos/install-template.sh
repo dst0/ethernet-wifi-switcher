@@ -97,6 +97,9 @@ cleanup_existing() {
         if [[ -z "$OLD_WORKDIR" ]]; then
             OLD_WORKDIR=$(grep -A 1 "StandardOutPath" "$SYS_PLIST_PATH" | grep "<string>" | sed 's|.*<string>\(.*\)</string>.*|\1|' | xargs dirname 2>/dev/null || true)
         fi
+
+        if [[ -n "$OLD_WORKDIR" && -f "$OLD_WORKDIR/uninstall.sh" ]]; then
+            echo "Running existing uninstaller from $OLD_WORKDIR..."
             bash "$OLD_WORKDIR/uninstall.sh" || true
         else
             echo "No existing uninstaller found or could not determine workdir. Performing manual cleanup..."

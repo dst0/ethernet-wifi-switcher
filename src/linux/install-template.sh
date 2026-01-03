@@ -39,6 +39,33 @@ install() {
         INSTALL_DIR=${input_dir:-$DEFAULT_INSTALL_DIR}
     fi
 
+    # Detect interfaces
+    AUTO_ETH=$(nmcli device | grep -E "ethernet" | awk '{print $1}' | head -n 1 || true)
+    AUTO_WIFI=$(nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1 || true)
+
+    if [[ -t 0 ]]; then
+        echo ""
+        echo "Available network interfaces:"
+        nmcli device
+        echo ""
+
+        ETH_PROMPT=${AUTO_ETH:-"Not set"}
+        read -p "Enter Ethernet interface [$ETH_PROMPT]: " input_eth
+        ETH_DEV=${input_eth:-$AUTO_ETH}
+
+        WIFI_PROMPT=${AUTO_WIFI:-"Not set"}
+        read -p "Enter Wi-Fi interface [$WIFI_PROMPT]: " input_wifi
+        WIFI_DEV=${input_wifi:-$AUTO_WIFI}
+    else
+        ETH_DEV="$AUTO_ETH"
+        WIFI_DEV="$AUTO_WIFI"
+    fi
+
+    if [[ -z "$ETH_DEV" || -z "$WIFI_DEV" ]]; then
+        echo "ERROR: Both Ethernet and Wi-Fi interfaces must be specified."
+        exit 1
+    fi
+
     echo "Installing Ethernet/Wi-Fi Auto Switcher to $INSTALL_DIR..."
 
     mkdir -p "$INSTALL_DIR"

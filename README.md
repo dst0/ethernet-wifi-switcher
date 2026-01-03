@@ -101,24 +101,27 @@ The project uses a modular build system to generate self-contained installers.
 
 ## Installation & Uninstallation
 
+If you downloaded the script manually, you may need to grant it execution permissions first:
+`chmod +x install-macos.sh` (or `install-linux.sh`).
+
 ### macOS
 **Install:**
 ```bash
-sudo ./dist/install-macos.sh
+sudo bash ./dist/install-macos.sh
 ```
 **Uninstall:**
 ```bash
-sudo ./dist/install-macos.sh --uninstall
+sudo bash ./dist/install-macos.sh --uninstall
 ```
 
 ### Linux
 **Install:**
 ```bash
-sudo ./dist/install-linux.sh
+sudo bash ./dist/install-linux.sh
 ```
 **Uninstall:**
 ```bash
-sudo ./dist/install-linux.sh --uninstall
+sudo bash ./dist/install-linux.sh --uninstall
 ```
 
 ### Windows (PowerShell Admin)
