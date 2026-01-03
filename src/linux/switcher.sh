@@ -33,7 +33,7 @@ get_eth_dev() {
     # If INTERFACE_PRIORITY is set, use it; otherwise default behavior
     if [ -n "$INTERFACE_PRIORITY" ]; then
         # Parse priority list and return first available ethernet interface
-        echo "$INTERFACE_PRIORITY" | tr ',' '\n' | while read -r iface; do
+        for iface in $(echo "$INTERFACE_PRIORITY" | tr ',' ' '); do
             iface=$(echo "$iface" | xargs) # trim whitespace
             if [ -n "$iface" ]; then
                 iface_type=$(nmcli device | grep "^$iface " | awk '{print $2}')
@@ -52,7 +52,7 @@ get_wifi_dev() {
     # If INTERFACE_PRIORITY is set, check it for wifi interfaces
     if [ -n "$INTERFACE_PRIORITY" ]; then
         # Parse priority list and return first available wifi interface
-        echo "$INTERFACE_PRIORITY" | tr ',' '\n' | while read -r iface; do
+        for iface in $(echo "$INTERFACE_PRIORITY" | tr ',' ' '); do
             iface=$(echo "$iface" | xargs) # trim whitespace
             if [ -n "$iface" ]; then
                 iface_type=$(nmcli device | grep "^$iface " | awk '{print $2}')

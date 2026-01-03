@@ -88,8 +88,8 @@ check_internet(){
         log "No gateway found for $iface"
         return 1
       fi
-      # Ping gateway with short timeout
-      if ping -c 1 -W 2000 -b "$iface" "$gateway" >/dev/null 2>&1; then
+      # Ping gateway with short timeout (macOS uses milliseconds for -W)
+      if ping -c 1 -W 2000 "$gateway" >/dev/null 2>&1; then
         return 0
       fi
       ;;
@@ -100,7 +100,7 @@ check_internet(){
         log "CHECK_TARGET not set for ping method"
         return 1
       fi
-      if ping -c 1 -W 3000 -b "$iface" "$CHECK_TARGET" >/dev/null 2>&1; then
+      if ping -c 1 -W 3000 "$CHECK_TARGET" >/dev/null 2>&1; then
         return 0
       fi
       ;;
