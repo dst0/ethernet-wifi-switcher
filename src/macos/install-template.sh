@@ -189,14 +189,14 @@ detect_interfaces() {
                 1)
                     CHECK_METHOD="gateway"
                     CHECK_TARGET=""
-                    echo "Using gateway ping (auto-detected per interface)"
+                    echo "Selected: Gateway ping (auto-detected per interface)"
                     ;;
                 2)
                     CHECK_METHOD="ping"
                     printf "Enter domain/IP to ping [8.8.8.8]: "
                     read -r input_check_target
                     CHECK_TARGET=${input_check_target:-8.8.8.8}
-                    echo "Using ping to $CHECK_TARGET"
+                    echo "Selected: Ping to $CHECK_TARGET"
                     ;;
                 3)
                     CHECK_METHOD="curl"
@@ -210,7 +210,7 @@ detect_interfaces() {
                     printf "Enter URL to check [http://captive.apple.com/hotspot-detect.html]: "
                     read -r input_check_target
                     CHECK_TARGET=${input_check_target:-http://captive.apple.com/hotspot-detect.html}
-                    echo "Using HTTP check to $CHECK_TARGET"
+                    echo "Selected: HTTP check to $CHECK_TARGET"
                     ;;
                 *)
                     echo "Invalid choice, using gateway ping (default)"
@@ -218,10 +218,22 @@ detect_interfaces() {
                     CHECK_TARGET=""
                     ;;
             esac
+            
+            echo ""
+            printf "Log every check attempt? (y/N) [logs only state changes by default]: "
+            read -r input_log_checks
+            if [ "$input_log_checks" = "y" ] || [ "$input_log_checks" = "Y" ]; then
+                LOG_CHECK_ATTEMPTS=1
+                echo "Enabled: Will log every check attempt"
+            else
+                LOG_CHECK_ATTEMPTS=0
+                echo "Default: Will log only state changes (failure/recovery)"
+            fi
         else
             CHECK_INTERNET=0
             CHECK_METHOD="gateway"
             CHECK_TARGET=""
+            LOG_CHECK_ATTEMPTS=0
         fi
     else
         WIFI_DEV="$AUTO_WIFI"
@@ -230,19 +242,21 @@ detect_interfaces() {
         CHECK_INTERNET="${CHECK_INTERNET:-0}"
         CHECK_METHOD="${CHECK_METHOD:-gateway}"
         CHECK_TARGET="${CHECK_TARGET:-}"
+        LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
     fi
 
     echo ""
     echo "Using configuration:"
-    echo "  Wi-Fi:    ${WIFI_DEV:-not found}"
-    echo "  Ethernet: ${ETH_DEV:-not found}"
-    echo "  Timeout:  ${TIMEOUT}s"
-    echo "  Check Internet: $CHECK_INTERNET"
+    echo "  Wi-Fi:            ${WIFI_DEV:-not found}"
+    echo "  Ethernet:         ${ETH_DEV:-not found}"
+    echo "  DHCP Timeout:     ${TIMEOUT}s"
+    echo "  Internet Check:   $CHECK_INTERNET"
     if [ "$CHECK_INTERNET" = "1" ]; then
-        echo "  Check Method: $CHECK_METHOD"
+        echo "  Check Method:     $CHECK_METHOD"
         if [ -n "$CHECK_TARGET" ]; then
-            echo "  Check Target: $CHECK_TARGET"
+            echo "  Check Target:     $CHECK_TARGET"
         fi
+        echo "  Log All Checks:   $LOG_CHECK_ATTEMPTS"
     fi
 
     if [ -z "$WIFI_DEV" ] || [ -z "$ETH_DEV" ]; then
@@ -380,6 +394,7 @@ main(){
   sed -i '' "s|CHECK_INTERNET=\"\${CHECK_INTERNET:-0}\"|CHECK_INTERNET=\"$CHECK_INTERNET\"|g" "$WORK_HELPER"
   sed -i '' "s|CHECK_METHOD=\"\${CHECK_METHOD:-gateway}\"|CHECK_METHOD=\"$CHECK_METHOD\"|g" "$WORK_HELPER"
   sed -i '' "s|CHECK_TARGET=\"\${CHECK_TARGET:-}\"|CHECK_TARGET=\"$CHECK_TARGET\"|g" "$WORK_HELPER"
+  sed -i '' "s|LOG_CHECK_ATTEMPTS=\"\${LOG_CHECK_ATTEMPTS:-0}\"|LOG_CHECK_ATTEMPTS=\"$LOG_CHECK_ATTEMPTS\"|g" "$WORK_HELPER"
   chmod +x "$WORK_HELPER"
 
   echo "Extracting watcher binary..."

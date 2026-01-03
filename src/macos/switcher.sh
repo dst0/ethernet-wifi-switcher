@@ -14,6 +14,8 @@ TIMEOUT="${TIMEOUT:-7}"
 CHECK_INTERNET="${CHECK_INTERNET:-0}"
 CHECK_METHOD="${CHECK_METHOD:-gateway}"
 CHECK_TARGET="${CHECK_TARGET:-}"
+LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
+LAST_CHECK_STATE_FILE="${STATE_FILE}.last_check"
 
 now(){ "$DATE" "+%Y-%m-%d %H:%M:%S"; }
 log(){ echo "[$(now)] $*"; }
@@ -79,18 +81,28 @@ eth_is_up_with_retry(){
 
 check_internet(){
   iface="$1"
+  result=1
   
   case "$CHECK_METHOD" in
     gateway)
       # Ping gateway - most reliable and safest method
       gateway=$(netstat -nr | grep "^default" | grep "$iface" | awk '{print $2}' | head -n 1)
       if [ -z "$gateway" ]; then
-        log "No gateway found for $iface"
+        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+          log "No gateway found for $iface"
+        fi
         return 1
       fi
       # Ping gateway with short timeout (macOS uses milliseconds for -W)
       if ping -c 1 -W 2000 "$gateway" >/dev/null 2>&1; then
-        return 0
+        result=0
+      fi
+      if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+        if [ $result -eq 0 ]; then
+          log "Internet check: gateway ping to $gateway via $iface succeeded"
+        else
+          log "Internet check: gateway ping to $gateway via $iface failed"
+        fi
       fi
       ;;
     
@@ -101,7 +113,14 @@ check_internet(){
         return 1
       fi
       if ping -c 1 -W 3000 "$CHECK_TARGET" >/dev/null 2>&1; then
-        return 0
+        result=0
+      fi
+      if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+        if [ $result -eq 0 ]; then
+          log "Internet check: ping to $CHECK_TARGET via $iface succeeded"
+        else
+          log "Internet check: ping to $CHECK_TARGET via $iface failed"
+        fi
       fi
       ;;
     
@@ -112,7 +131,14 @@ check_internet(){
       fi
       if command -v curl >/dev/null 2>&1; then
         if curl --interface "$iface" --connect-timeout 5 --max-time 10 -s -f "$CHECK_TARGET" >/dev/null 2>&1; then
-          return 0
+          result=0
+        fi
+      fi
+      if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+        if [ $result -eq 0 ]; then
+          log "Internet check: HTTP check to $CHECK_TARGET via $iface succeeded"
+        else
+          log "Internet check: HTTP check to $CHECK_TARGET via $iface failed"
         fi
       fi
       ;;
@@ -123,7 +149,23 @@ check_internet(){
       ;;
   esac
   
-  return 1
+  # Log state changes (always logged regardless of LOG_CHECK_ATTEMPTS)
+  last_check_state=$(cat "$LAST_CHECK_STATE_FILE" 2>/dev/null || echo "unknown")
+  current_check_state="success"
+  if [ $result -ne 0 ]; then
+    current_check_state="failed"
+  fi
+  
+  if [ "$last_check_state" != "$current_check_state" ]; then
+    if [ "$current_check_state" = "success" ]; then
+      log "Internet check: $iface is now reachable (recovered from failure)"
+    else
+      log "Internet check: $iface is now unreachable (was working before)"
+    fi
+    echo "$current_check_state" > "$LAST_CHECK_STATE_FILE"
+  fi
+  
+  return $result
 }
 
 main(){

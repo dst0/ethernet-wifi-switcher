@@ -142,7 +142,6 @@ function Install {
         Write-Host "Internet Connectivity Monitoring (Optional):"
         Write-Host "  Enable this to monitor actual internet availability, not just link status."
         Write-Host "  The system will switch to WiFi if Ethernet has no internet access."
-        Write-Host "  Note: This adds periodic connectivity checks (default: every 30 seconds)."
         Write-Host ""
         $checkInternetInput = Read-Host "Enable internet monitoring? (y/N)"
         if ($checkInternetInput -eq "y" -or $checkInternetInput -eq "Y") {
@@ -161,13 +160,13 @@ function Install {
                 1 {
                     $checkMethod = "gateway"
                     $checkTarget = ""
-                    Write-Host "Using gateway ping (auto-detected per interface)"
+                    Write-Host "Selected: Gateway ping (auto-detected per interface)"
                 }
                 2 {
                     $checkMethod = "ping"
                     $checkTargetInput = Read-Host "Enter domain/IP to ping [8.8.8.8]"
                     $checkTarget = if ($checkTargetInput) { $checkTargetInput } else { "8.8.8.8" }
-                    Write-Host "Using ping to $checkTarget"
+                    Write-Host "Selected: Ping to $checkTarget"
                 }
                 3 {
                     $checkMethod = "curl"
@@ -180,7 +179,7 @@ function Install {
                     Write-Host ""
                     $checkTargetInput = Read-Host "Enter URL to check [http://captive.apple.com/hotspot-detect.html]"
                     $checkTarget = if ($checkTargetInput) { $checkTargetInput } else { "http://captive.apple.com/hotspot-detect.html" }
-                    Write-Host "Using HTTP check to $checkTarget"
+                    Write-Host "Selected: HTTP check to $checkTarget"
                 }
                 default {
                     Write-Host "Invalid choice, using gateway ping (default)"
@@ -189,13 +188,26 @@ function Install {
                 }
             }
             
+            Write-Host ""
             $checkIntervalInput = Read-Host "Check interval in seconds [30]"
             $checkInterval = if ($checkIntervalInput) { [int]$checkIntervalInput } else { 30 }
+            Write-Host "Check interval: $($checkInterval)s"
+            
+            Write-Host ""
+            $logChecksInput = Read-Host "Log every check attempt? (y/N) [logs only state changes by default]"
+            if ($logChecksInput -eq "y" -or $logChecksInput -eq "Y") {
+                $logCheckAttempts = 1
+                Write-Host "Enabled: Will log every check attempt"
+            } else {
+                $logCheckAttempts = 0
+                Write-Host "Default: Will log only state changes (failure/recovery)"
+            }
         } else {
             $checkInternet = 0
             $checkInterval = 30
             $checkMethod = "gateway"
             $checkTarget = ""
+            $logCheckAttempts = 0
         }
     } else {
         $ethInput = if ($envEth) { $envEth } else { $autoEth }
@@ -205,6 +217,7 @@ function Install {
         $checkInterval = if ($env:CHECK_INTERVAL) { [int]$env:CHECK_INTERVAL } else { 30 }
         $checkMethod = if ($env:CHECK_METHOD) { $env:CHECK_METHOD } else { "gateway" }
         $checkTarget = if ($env:CHECK_TARGET) { $env:CHECK_TARGET } else { "" }
+        $logCheckAttempts = if ($env:LOG_CHECK_ATTEMPTS) { [int]$env:LOG_CHECK_ATTEMPTS } else { 0 }
     }
 
     if ([string]::IsNullOrWhiteSpace($ethInput) -or [string]::IsNullOrWhiteSpace($wifiInput) -or $ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
@@ -217,16 +230,17 @@ function Install {
     Write-Host "Installation directory: $InstallDir"
     Write-Host ""
     Write-Host "Using configuration:"
-    Write-Host "  Ethernet: $ethInput"
-    Write-Host "  Wi-Fi:    $wifiInput"
-    Write-Host "  Timeout:  $($timeout)s"
-    Write-Host "  Check Internet: $checkInternet"
+    Write-Host "  Ethernet:         $ethInput"
+    Write-Host "  Wi-Fi:            $wifiInput"
+    Write-Host "  DHCP Timeout:     $($timeout)s"
+    Write-Host "  Internet Check:   $checkInternet"
     if ($checkInternet -eq 1) {
-        Write-Host "  Check Method: $checkMethod"
+        Write-Host "  Check Method:     $checkMethod"
         if ($checkTarget) {
-            Write-Host "  Check Target: $checkTarget"
+            Write-Host "  Check Target:     $checkTarget"
         }
-        Write-Host "  Check Interval: $($checkInterval)s"
+        Write-Host "  Check Interval:   $($checkInterval)s"
+        Write-Host "  Log All Checks:   $logCheckAttempts"
     }
     Write-Host ""
 
@@ -260,7 +274,7 @@ function Install {
 
     # Set environment variable for the task using XML modification
     $taskXml = Export-ScheduledTask -TaskName $TaskName
-    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERNET</Name>`n        <Value>$checkInternet</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERVAL</Name>`n        <Value>$checkInterval</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_METHOD</Name>`n        <Value>$checkMethod</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_TARGET</Name>`n        <Value>$checkTarget</Value>`n      </Variable>`n    </EnvironmentVariables>"
+    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERNET</Name>`n        <Value>$checkInternet</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERVAL</Name>`n        <Value>$checkInterval</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_METHOD</Name>`n        <Value>$checkMethod</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_TARGET</Name>`n        <Value>$checkTarget</Value>`n      </Variable>`n      <Variable>`n        <Name>LOG_CHECK_ATTEMPTS</Name>`n        <Value>$logCheckAttempts</Value>`n      </Variable>`n    </EnvironmentVariables>"
     $taskXml | Register-ScheduledTask -TaskName $TaskName -Force | Out-Null
 
     Start-ScheduledTask -TaskName $TaskName

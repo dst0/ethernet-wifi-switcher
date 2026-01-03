@@ -195,7 +195,6 @@ install() {
         echo "Internet Connectivity Monitoring (Optional):"
         echo "  Enable this to monitor actual internet availability, not just link status."
         echo "  The system will switch to WiFi if Ethernet has no internet access."
-        echo "  Note: This adds periodic connectivity checks (default: every 30 seconds)."
         echo ""
         printf "Enable internet monitoring? (y/N): "
         read -r input_check_internet
@@ -216,14 +215,14 @@ install() {
                 1)
                     CHECK_METHOD="gateway"
                     CHECK_TARGET=""
-                    echo "Using gateway ping (auto-detected per interface)"
+                    echo "Selected: Gateway ping (auto-detected per interface)"
                     ;;
                 2)
                     CHECK_METHOD="ping"
                     printf "Enter domain/IP to ping [8.8.8.8]: "
                     read -r input_check_target
                     CHECK_TARGET=${input_check_target:-8.8.8.8}
-                    echo "Using ping to $CHECK_TARGET"
+                    echo "Selected: Ping to $CHECK_TARGET"
                     ;;
                 3)
                     CHECK_METHOD="curl"
@@ -237,7 +236,7 @@ install() {
                     printf "Enter URL to check [http://captive.apple.com/hotspot-detect.html]: "
                     read -r input_check_target
                     CHECK_TARGET=${input_check_target:-http://captive.apple.com/hotspot-detect.html}
-                    echo "Using HTTP check to $CHECK_TARGET"
+                    echo "Selected: HTTP check to $CHECK_TARGET"
                     ;;
                 *)
                     echo "Invalid choice, using gateway ping (default)"
@@ -246,14 +245,55 @@ install() {
                     ;;
             esac
             
+            echo ""
             printf "Enter check interval in seconds [30]: "
             read -r input_check_interval
             CHECK_INTERVAL=${input_check_interval:-30}
+            echo "Check interval: ${CHECK_INTERVAL}s"
+            
+            echo ""
+            printf "Log every check attempt? (y/N) [logs only state changes by default]: "
+            read -r input_log_checks
+            if [ "$input_log_checks" = "y" ] || [ "$input_log_checks" = "Y" ]; then
+                LOG_CHECK_ATTEMPTS=1
+                echo "Enabled: Will log every check attempt"
+            else
+                LOG_CHECK_ATTEMPTS=0
+                echo "Default: Will log only state changes (failure/recovery)"
+            fi
         else
             CHECK_INTERNET=0
             CHECK_INTERVAL=30
             CHECK_METHOD="gateway"
             CHECK_TARGET=""
+            LOG_CHECK_ATTEMPTS=0
+        fi
+        
+        echo ""
+        echo "Multi-Interface Configuration (Optional):"
+        echo "  Configure priority for multiple ethernet or wifi interfaces."
+        echo ""
+        printf "Configure interface priority? (y/N): "
+        read -r input_config_priority
+        if [ "$input_config_priority" = "y" ] || [ "$input_config_priority" = "Y" ]; then
+            echo ""
+            echo "Available interfaces:"
+            if command -v nmcli > /dev/null 2>&1; then
+                nmcli device | grep -E "(ethernet|wifi)" | awk '{printf "  %s (%s)\n", $1, $2}'
+            elif command -v ip > /dev/null 2>&1; then
+                ip -brief link show | grep -v "lo" | awk '{printf "  %s\n", $1}'
+            fi
+            echo ""
+            echo "Enter interfaces in priority order (comma-separated, highest first):"
+            echo "Example: eth0,eth1,wlan0"
+            printf "Interface priority: "
+            read -r input_interface_priority
+            INTERFACE_PRIORITY="$input_interface_priority"
+            if [ -n "$INTERFACE_PRIORITY" ]; then
+                echo "Priority configured: $INTERFACE_PRIORITY"
+            fi
+        else
+            INTERFACE_PRIORITY=""
         fi
     else
         ETH_DEV="$AUTO_ETH"
@@ -263,6 +303,8 @@ install() {
         CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
         CHECK_METHOD="${CHECK_METHOD:-gateway}"
         CHECK_TARGET="${CHECK_TARGET:-}"
+        LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
+        INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
     fi
 
     if [ -z "$ETH_DEV" ] || [ -z "$WIFI_DEV" ]; then
@@ -273,16 +315,20 @@ install() {
     echo "Installation directory: $INSTALL_DIR"
     echo ""
     echo "Using configuration:"
-    echo "  Ethernet: $ETH_DEV"
-    echo "  Wi-Fi:    $WIFI_DEV"
-    echo "  Timeout:  ${TIMEOUT}s"
-    echo "  Check Internet: $CHECK_INTERNET"
+    echo "  Ethernet:         $ETH_DEV"
+    echo "  Wi-Fi:            $WIFI_DEV"
+    echo "  DHCP Timeout:     ${TIMEOUT}s"
+    echo "  Internet Check:   $CHECK_INTERNET"
     if [ "$CHECK_INTERNET" = "1" ]; then
-        echo "  Check Method: $CHECK_METHOD"
+        echo "  Check Method:     $CHECK_METHOD"
         if [ -n "$CHECK_TARGET" ]; then
-            echo "  Check Target: $CHECK_TARGET"
+            echo "  Check Target:     $CHECK_TARGET"
         fi
-        echo "  Check Interval: ${CHECK_INTERVAL}s"
+        echo "  Check Interval:   ${CHECK_INTERVAL}s"
+        echo "  Log All Checks:   $LOG_CHECK_ATTEMPTS"
+    fi
+    if [ -n "$INTERFACE_PRIORITY" ]; then
+        echo "  Interface Priority: $INTERFACE_PRIORITY"
     fi
 
     mkdir -p "$INSTALL_DIR"
@@ -311,6 +357,8 @@ Environment="CHECK_INTERNET=$CHECK_INTERNET"
 Environment="CHECK_INTERVAL=$CHECK_INTERVAL"
 Environment="CHECK_METHOD=$CHECK_METHOD"
 Environment="CHECK_TARGET=$CHECK_TARGET"
+Environment="LOG_CHECK_ATTEMPTS=$LOG_CHECK_ATTEMPTS"
+Environment="INTERFACE_PRIORITY=$INTERFACE_PRIORITY"
 Restart=always
 RestartSec=5
 

@@ -10,7 +10,9 @@ CHECK_INTERNET="${CHECK_INTERNET:-0}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
 CHECK_METHOD="${CHECK_METHOD:-gateway}"
 CHECK_TARGET="${CHECK_TARGET:-}"
+LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
 INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
+LAST_CHECK_STATE_FILE="${STATE_FILE}.last_check"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -84,6 +86,7 @@ get_all_network_devs() {
 
 check_internet() {
     iface="$1"
+    result=1
     
     case "$CHECK_METHOD" in
         gateway)
@@ -91,12 +94,21 @@ check_internet() {
             # Get the gateway for this interface
             gateway=$(ip route show dev "$iface" | grep default | awk '{print $3}' | head -n 1)
             if [ -z "$gateway" ]; then
-                log "No gateway found for $iface"
+                if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                    log "No gateway found for $iface"
+                fi
                 return 1
             fi
             # Ping gateway with short timeout
             if ping -I "$iface" -c 1 -W 2 "$gateway" >/dev/null 2>&1; then
-                return 0
+                result=0
+            fi
+            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                if [ $result -eq 0 ]; then
+                    log "Internet check: gateway ping to $gateway via $iface succeeded"
+                else
+                    log "Internet check: gateway ping to $gateway via $iface failed"
+                fi
             fi
             ;;
         
@@ -107,7 +119,14 @@ check_internet() {
                 return 1
             fi
             if ping -I "$iface" -c 1 -W 3 "$CHECK_TARGET" >/dev/null 2>&1; then
-                return 0
+                result=0
+            fi
+            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                if [ $result -eq 0 ]; then
+                    log "Internet check: ping to $CHECK_TARGET via $iface succeeded"
+                else
+                    log "Internet check: ping to $CHECK_TARGET via $iface failed"
+                fi
             fi
             ;;
         
@@ -118,15 +137,22 @@ check_internet() {
             fi
             if command -v curl >/dev/null 2>&1; then
                 if curl --interface "$iface" --connect-timeout 5 --max-time 10 -s -f "$CHECK_TARGET" >/dev/null 2>&1; then
-                    return 0
+                    result=0
                 fi
             elif command -v wget >/dev/null 2>&1; then
                 # Get IP address for wget binding
                 iface_ip=$(nmcli -t -f IP4.ADDRESS device show "$iface" 2>/dev/null | cut -d: -f2 | cut -d/ -f1 | head -n 1)
                 if [ -n "$iface_ip" ]; then
                     if wget --bind-address="$iface_ip" --timeout=10 --tries=1 -q -O /dev/null "$CHECK_TARGET" 2>/dev/null; then
-                        return 0
+                        result=0
                     fi
+                fi
+            fi
+            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                if [ $result -eq 0 ]; then
+                    log "Internet check: HTTP check to $CHECK_TARGET via $iface succeeded"
+                else
+                    log "Internet check: HTTP check to $CHECK_TARGET via $iface failed"
                 fi
             fi
             ;;
@@ -137,7 +163,23 @@ check_internet() {
             ;;
     esac
     
-    return 1
+    # Log state changes (always logged regardless of LOG_CHECK_ATTEMPTS)
+    last_check_state=$(cat "$LAST_CHECK_STATE_FILE" 2>/dev/null || echo "unknown")
+    current_check_state="success"
+    if [ $result -ne 0 ]; then
+        current_check_state="failed"
+    fi
+    
+    if [ "$last_check_state" != "$current_check_state" ]; then
+        if [ "$current_check_state" = "success" ]; then
+            log "Internet check: $iface is now reachable (recovered from failure)"
+        else
+            log "Internet check: $iface is now unreachable (was working before)"
+        fi
+        echo "$current_check_state" > "$LAST_CHECK_STATE_FILE"
+    fi
+    
+    return $result
 }
 
 eth_is_connecting() {

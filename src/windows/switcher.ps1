@@ -7,8 +7,10 @@ $CheckInternet = if ($env:CHECK_INTERNET) { [int]$env:CHECK_INTERNET } else { 0 
 $CheckInterval = if ($env:CHECK_INTERVAL) { [int]$env:CHECK_INTERVAL } else { 30 }
 $CheckMethod = if ($env:CHECK_METHOD) { $env:CHECK_METHOD } else { "gateway" }
 $CheckTarget = if ($env:CHECK_TARGET) { $env:CHECK_TARGET } else { "" }
+$LogCheckAttempts = if ($env:LOG_CHECK_ATTEMPTS) { [int]$env:LOG_CHECK_ATTEMPTS } else { 0 }
 $LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { Split-Path $StateFile }
 $LogFile = Join-Path $LogDir "switcher.log"
+$LastCheckStateFile = "$StateFile.last_check"
 
 function Log-Message {
     param([string]$Message)
@@ -115,11 +117,15 @@ function Test-InternetConnectivity {
         return $false
     }
 
+    $result = $false
+    
     try {
         # Get the IP address of the adapter to ensure we're testing the right interface
         $ipAddress = Get-NetIPAddress -InterfaceIndex $Adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $ipAddress) {
-            Log-Message "No IP address on $($Adapter.Name), cannot check internet"
+            if ($LogCheckAttempts -eq 1) {
+                Log-Message "No IP address on $($Adapter.Name), cannot check internet"
+            }
             return $false
         }
 
@@ -128,12 +134,21 @@ function Test-InternetConnectivity {
                 # Ping gateway - most reliable and safest method
                 $gateway = Get-NetRoute -InterfaceIndex $Adapter.ifIndex -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty NextHop
                 if (-not $gateway) {
-                    Log-Message "No gateway found for $($Adapter.Name)"
+                    if ($LogCheckAttempts -eq 1) {
+                        Log-Message "No gateway found for $($Adapter.Name)"
+                    }
                     return $false
                 }
                 # Ping gateway with short timeout
                 $pingResult = Test-Connection -ComputerName $gateway -Count 1 -TimeoutSeconds 2 -Quiet -ErrorAction SilentlyContinue
-                return $pingResult
+                $result = $pingResult
+                if ($LogCheckAttempts -eq 1) {
+                    if ($result) {
+                        Log-Message "Internet check: gateway ping to $gateway via $($Adapter.Name) succeeded"
+                    } else {
+                        Log-Message "Internet check: gateway ping to $gateway via $($Adapter.Name) failed"
+                    }
+                }
             }
             
             "ping" {
@@ -143,7 +158,14 @@ function Test-InternetConnectivity {
                     return $false
                 }
                 $pingResult = Test-Connection -ComputerName $CheckTarget -Count 1 -TimeoutSeconds 3 -Quiet -ErrorAction SilentlyContinue
-                return $pingResult
+                $result = $pingResult
+                if ($LogCheckAttempts -eq 1) {
+                    if ($result) {
+                        Log-Message "Internet check: ping to $CheckTarget via $($Adapter.Name) succeeded"
+                    } else {
+                        Log-Message "Internet check: ping to $CheckTarget via $($Adapter.Name) failed"
+                    }
+                }
             }
             
             "curl" {
@@ -156,15 +178,22 @@ function Test-InternetConnectivity {
                 $curlPath = Get-Command curl.exe -ErrorAction SilentlyContinue
                 if ($curlPath) {
                     # Use curl with interface binding for accurate testing
-                    $result = & curl.exe --interface $Adapter.Name --connect-timeout 5 --max-time 10 -s -f -o nul $CheckTarget 2>$null
+                    $curlResult = & curl.exe --interface $Adapter.Name --connect-timeout 5 --max-time 10 -s -f -o nul $CheckTarget 2>$null
                     if ($LASTEXITCODE -eq 0) {
-                        return $true
+                        $result = $true
+                    }
+                } else {
+                    # Fallback to Invoke-WebRequest
+                    $response = Invoke-WebRequest -Uri $CheckTarget -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+                    $result = ($response.StatusCode -eq 200)
+                }
+                if ($LogCheckAttempts -eq 1) {
+                    if ($result) {
+                        Log-Message "Internet check: HTTP check to $CheckTarget via $($Adapter.Name) succeeded"
+                    } else {
+                        Log-Message "Internet check: HTTP check to $CheckTarget via $($Adapter.Name) failed"
                     }
                 }
-                
-                # Fallback to Invoke-WebRequest
-                $response = Invoke-WebRequest -Uri $CheckTarget -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
-                return ($response.StatusCode -eq 200)
             }
             
             default {
@@ -172,8 +201,28 @@ function Test-InternetConnectivity {
                 return $false
             }
         }
+        
+        # Log state changes (always logged regardless of LogCheckAttempts)
+        $lastCheckState = "unknown"
+        if (Test-Path $LastCheckStateFile) {
+            $lastCheckState = Get-Content $LastCheckStateFile -ErrorAction SilentlyContinue
+        }
+        $currentCheckState = if ($result) { "success" } else { "failed" }
+        
+        if ($lastCheckState -ne $currentCheckState) {
+            if ($currentCheckState -eq "success") {
+                Log-Message "Internet check: $($Adapter.Name) is now reachable (recovered from failure)"
+            } else {
+                Log-Message "Internet check: $($Adapter.Name) is now unreachable (was working before)"
+            }
+            Set-Content -Path $LastCheckStateFile -Value $currentCheckState
+        }
+        
+        return $result
     } catch {
-        Log-Message "Internet check failed on $($Adapter.Name): $($_.Exception.Message)"
+        if ($LogCheckAttempts -eq 1) {
+            Log-Message "Internet check failed on $($Adapter.Name): $($_.Exception.Message)"
+        }
         return $false
     }
 }
