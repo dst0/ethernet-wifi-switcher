@@ -176,13 +176,22 @@ check_internet() {
     esac
 
     # Log state changes (always logged regardless of LOG_CHECK_ATTEMPTS)
-    last_check_state=$(cat "$LAST_CHECK_STATE_FILE" 2>/dev/null || echo "unknown")
+    last_check_state=$(cat "$LAST_CHECK_STATE_FILE" 2>/dev/null || echo "")
     current_check_state="success"
     if [ $result -ne 0 ]; then
         current_check_state="failed"
     fi
 
-    if [ "$last_check_state" != "$current_check_state" ]; then
+    if [ -z "$last_check_state" ]; then
+        # First run - initialize state with specific message based on result
+        if [ "$current_check_state" = "success" ]; then
+            log "Internet check: $iface is active and has internet"
+        else
+            log "Internet check: $iface connection is not active"
+        fi
+        echo "$current_check_state" > "$LAST_CHECK_STATE_FILE"
+    elif [ "$last_check_state" != "$current_check_state" ]; then
+        # State changed - log the transition
         if [ "$current_check_state" = "success" ]; then
             log "Internet check: $iface is now reachable (recovered from failure)"
         else

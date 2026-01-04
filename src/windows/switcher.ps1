@@ -247,13 +247,22 @@ function Test-InternetConnectivity {
         }
 
         # Log state changes (always logged regardless of LogCheckAttempts)
-        $lastCheckState = "unknown"
+        $lastCheckState = ""
         if (Test-Path $LastCheckStateFile) {
             $lastCheckState = Get-Content $LastCheckStateFile -ErrorAction SilentlyContinue
         }
         $currentCheckState = if ($result) { "success" } else { "failed" }
 
-        if ($lastCheckState -ne $currentCheckState) {
+        if ([string]::IsNullOrEmpty($lastCheckState)) {
+            # First run - initialize state with specific message based on result
+            if ($currentCheckState -eq "success") {
+                Log-Message "Internet check: $($Adapter.Name) is active and has internet"
+            } else {
+                Log-Message "Internet check: $($Adapter.Name) connection is not active"
+            }
+            Set-Content -Path $LastCheckStateFile -Value $currentCheckState
+        } elseif ($lastCheckState -ne $currentCheckState) {
+            # State changed - log the transition
             if ($currentCheckState -eq "success") {
                 Log-Message "Internet check: $($Adapter.Name) is now reachable (recovered from failure)"
             } else {
