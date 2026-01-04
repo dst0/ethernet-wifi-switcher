@@ -498,7 +498,7 @@ check_and_switch() {
         log "Ethernet disconnected, enabling Wi-Fi immediately"
         write_state "disconnected"
         if [ "$wifi_enabled" = "disabled" ]; then
-            nmcli radio wifi on
+            enable_wifi
         fi
         return
     fi

@@ -10,12 +10,22 @@ tests/
 │   ├── mock.sh            # Mock command framework
 │   └── assert.sh          # Assertion functions
 ├── unit/                  # Unit tests with mocked commands
-│   ├── test_linux_interface_detection.sh
-│   ├── test_internet_check.sh
-│   └── test_multi_interface.sh
+│   ├── test_linux_backends.sh               # Backend function tests
+│   ├── test_linux_interface_detection.sh    # Interface detection tests
+│   ├── test_linux_complex_scenarios.sh      # Complex edge cases
+│   ├── test_internet_check.sh               # Connectivity check methods
+│   ├── test_internet_failover.sh            # Internet-based failover logic
+│   ├── test_ip_acquisition_retry.sh         # IP retry mechanisms
+│   ├── test_multi_interface.sh              # Priority selection
+│   ├── test_wifi_state_management.sh        # WiFi state transitions
+│   ├── test_wifi_complex_scenarios.sh       # WiFi edge cases
+│   ├── test_macos_interface_and_internet.sh # macOS specific tests
+│   ├── test_windows_basic.sh                # Windows basic tests
+│   └── test_windows_complex_scenarios.sh    # Windows edge cases
 ├── integration/           # Integration tests in containers
 │   ├── Dockerfile.linux
-│   └── test_linux_integration.sh
+│   ├── test_linux_integration.sh
+│   └── test_macos_integration.sh
 ├── run_all_tests.sh      # Run all tests
 └── README.md             # This file
 ```
@@ -97,9 +107,24 @@ test_summary
 
 Unit tests mock all system commands to test logic in isolation:
 
+### Linux Tests
+- **test_linux_backends.sh**: Tests both nmcli and ip backends, verifies all backend functions work correctly
 - **test_linux_interface_detection.sh**: Tests interface detection logic with various tools (nmcli, ip, /sys/class/net)
+- **test_linux_complex_scenarios.sh**: Tests complex edge cases specific to Linux (simultaneous changes, race conditions)
 - **test_internet_check.sh**: Tests all three connectivity check methods (gateway, ping, curl)
-- **test_multi_interface.sh**: Tests interface priority selection logic
+- **test_internet_failover.sh**: Tests internet-based failover scenarios
+- **test_ip_acquisition_retry.sh**: Tests DHCP retry logic and timeout handling
+- **test_multi_interface.sh**: Tests interface priority selection logic with multiple interfaces
+- **test_wifi_state_management.sh**: Tests WiFi state transitions and radio control
+- **test_wifi_complex_scenarios.sh**: Tests complex WiFi scenarios (delayed connections, failover)
+- **test_auto_defaults_flag.sh**: Tests --auto and --defaults command-line flags and their behavior
+
+### macOS Tests
+- **test_macos_interface_and_internet.sh**: Tests macOS-specific interface handling and internet checks
+
+### Windows Tests
+- **test_windows_basic.sh**: Tests basic Windows PowerShell functionality
+- **test_windows_complex_scenarios.sh**: Tests Windows-specific edge cases and state management
 
 ### Adding New Unit Tests
 
@@ -152,8 +177,10 @@ test:
 
 ## Future Improvements
 
-- [ ] Add macOS-specific unit tests
-- [ ] Add Windows PowerShell unit tests
+- [x] Add comprehensive Linux backend tests
+- [x] Add WiFi state management tests
+- [x] Add internet failover tests
+- [x] Add complex scenario tests for all platforms
 - [ ] Add macOS integration tests (requires macOS runner)
 - [ ] Add Windows integration tests
 - [ ] Add code coverage reporting

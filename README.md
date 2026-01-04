@@ -18,15 +18,25 @@ Choose your platform and run the command in your terminal:
 
 ### macOS
 ```bash
+# Interactive installation (recommended for first-time users)
 curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-macos.sh | sudo bash
+
+# Quick install with all defaults (auto-detects interfaces, enables internet monitoring)
+curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-macos.sh | sudo bash -s -- --auto
 ```
 > **Note:** `curl` is required and should be pre-installed on macOS. It's critical for multi-interface internet monitoring.
+> Use `--auto` or `--defaults` for hands-free installation with recommended settings.
 
 ### Linux
 ```bash
+# Interactive installation (recommended for first-time users)
 curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-linux.sh | sudo bash
+
+# Quick install with all defaults (auto-installs dependencies, enables internet monitoring)
+curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-linux.sh | sudo bash -s -- --auto
 ```
 > **Note:** If `curl` is not installed: `sudo apt install curl` or `sudo yum install curl`
+> Use `--auto` or `--defaults` for hands-free installation with automatic dependency installation.
 
 ### Windows (PowerShell Admin)
 **Important:** Right-click PowerShell → "Run as administrator" before running this command.
@@ -61,6 +71,8 @@ By default, Windows blocks PowerShell script execution for security. **You must 
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; curl -Uri https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-windows.ps1 -UseBasicParsing | iex
 ```
 
+> Use `-Auto` or `-Defaults` for hands-free installation with recommended settings.
+
 **What this does:**
 - ✅ Safe: Only affects the current PowerShell window
 - ✅ Temporary: Reverts when you close PowerShell
@@ -82,7 +94,11 @@ If you prefer not to use the one-liner, download the script and run it:
 3. Navigate to the download folder: `cd ~/Downloads`
 4. Run:
 ```powershell
+# Interactive mode (prompts for configuration)
 powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
+
+# Auto mode (uses recommended defaults)
+powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1" -Auto
 ```
 
 **Note:** Do NOT double-click the .ps1 file - it will fail due to execution policy. Always run from PowerShell with `-ExecutionPolicy Bypass`.
@@ -254,8 +270,17 @@ CHECK_INTERNET=1 CHECK_METHOD=gateway CHECK_INTERVAL=30 sudo bash ./install-linu
 # Linux - Ping to 8.8.8.8 (tests actual internet)
 CHECK_INTERNET=1 CHECK_METHOD=ping CHECK_TARGET=8.8.8.8 CHECK_INTERVAL=30 sudo bash ./install-linux.sh
 
+# Linux - Auto-install missing dependencies (non-interactive)
+AUTO_INSTALL_DEPS=1 sudo bash ./install-linux.sh
+
+# Linux - Full automation with dependency install
+AUTO_INSTALL_DEPS=1 CHECK_INTERNET=1 CHECK_METHOD=gateway CHECK_INTERVAL=30 sudo bash ./install-linux.sh
+
 # macOS - Any method works (automatically uses curl for inactive interfaces)
 CHECK_INTERNET=1 CHECK_METHOD=ping CHECK_TARGET=8.8.8.8 CHECK_INTERVAL=30 INTERFACE_PRIORITY="en5,en0" sudo bash src/macos/install-template.sh
+
+# macOS - Auto-install (requires Xcode CLI tools pre-installed)
+AUTO_INSTALL_DEPS=1 CHECK_INTERNET=1 CHECK_METHOD=gateway sudo bash src/macos/install-template.sh
 
 # macOS - Curl method (tests actual internet on active interface too)
 CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_INTERVAL=30 INTERFACE_PRIORITY="en5,en0" sudo bash src/macos/install-template.sh
@@ -266,6 +291,18 @@ CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_INTERVAL=30 LOG_CHECK_ATTEMPTS=1 INTERF
 # Windows examples
 $env:CHECK_INTERNET=1; $env:CHECK_METHOD="gateway"; $env:CHECK_INTERVAL=30; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
 ```
+
+**Auto-Install Dependencies:**
+
+Set `AUTO_INSTALL_DEPS=1` to automatically install missing dependencies in non-interactive mode:
+
+- **Linux**: Installs NetworkManager, iproute2, rfkill, ping, curl as needed
+  - Detects distribution and uses appropriate package manager (apt, dnf, pacman, etc.)
+  - Defaults to NetworkManager when both options are available
+
+- **macOS**: Cannot auto-install Xcode Command Line Tools (requires GUI dialog)
+  - Must be pre-installed: `xcode-select --install`
+  - Alternative: Install via Homebrew: `brew install swift`
 
 **Logging behavior:**
 
@@ -451,11 +488,47 @@ Get-Command Get-NetAdapter -ErrorAction SilentlyContinue
 If you downloaded the script manually, you may need to grant it execution permissions first:
 `chmod +x install-macos.sh` (or `install-linux.sh`).
 
+### Installation Modes
+
+**Interactive Mode** (Default):
+- Prompts for each configuration option
+- Recommended for first-time users
+- Allows customization of interfaces, timeouts, and monitoring
+
+**Auto Mode** (Quick & Simple):
+```bash
+# Linux - All defaults with automatic dependency installation
+sudo bash ./install-linux.sh --auto
+
+# macOS - All defaults (Xcode CLI tools must be pre-installed)
+sudo bash ./install-macos.sh --defaults
+
+# Windows - All defaults (PowerShell as Administrator)
+powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1" -Auto
+
+# You can also use --defaults flag (same as --auto)
+sudo bash ./install-linux.sh --defaults
+```
+
+**Auto Mode Features:**
+- ✅ Auto-detects network interfaces
+- ✅ Enables internet connectivity monitoring (ping to 8.8.8.8 every 30s)
+- ✅ Uses recommended defaults for all settings
+- ✅ Installs missing dependencies automatically (Linux)
+- ✅ No prompts - fully automated
+- ✅ Perfect for CI/CD, scripting, or users who trust automation
+
 ### 🍎 macOS
-**Install:**
+**Install (Interactive):**
 ```bash
 sudo bash ./dist/install-macos.sh
 ```
+
+**Install (Auto Mode):**
+```bash
+sudo bash ./dist/install-macos.sh --auto
+```
+
 Output:
 ```
 ...

@@ -5,6 +5,27 @@ set -eu
 # Eth/Wi-Fi Auto Switcher (macOS Installer Template)
 # =========================================================
 
+# Parse command line flags
+USE_DEFAULTS=0
+WORKDIR=""
+for arg in "$@"; do
+    case "$arg" in
+        --auto|--defaults)
+            USE_DEFAULTS=1
+            AUTO_INSTALL_DEPS=1
+            ;;
+        --uninstall)
+            # Handled at end of script - skips main() and calls uninstall()
+            ;;
+        *)
+            # Assume it's the workdir
+            if [ -z "$WORKDIR" ] && [ "$arg" != "--auto" ] && [ "$arg" != "--defaults" ]; then
+                WORKDIR="$arg"
+            fi
+            ;;
+    esac
+done
+
 DAEMON_LABEL="com.ethwifiauto.watch"
 
 # System install paths
@@ -13,19 +34,15 @@ SYS_WATCHER_BIN="/usr/local/sbin/ethwifiauto-watch"
 SYS_PLIST_PATH="/Library/LaunchDaemons/${DAEMON_LABEL}.plist"
 
 DEFAULT_WORKDIR="${HOME}/.ethernet-wifi-auto-switcher"
-# Don't use $1 as WORKDIR if it's --uninstall
-if [ "${1:-}" = "--uninstall" ]; then
-  WORKDIR=""
-else
-  WORKDIR="${1:-}"
-fi
 IS_TEST="${TEST_MODE:-0}"
 
 # If no workdir provided and interactive, ask user (but not during uninstall)
-if [ -z "$WORKDIR" ] && [ -t 0 ] && [ "${1:-}" != "--uninstall" ]; then
+if [ -z "$WORKDIR" ] && [ -t 0 ] && [ "$USE_DEFAULTS" = "0" ] && [ "${1:-}" != "--uninstall" ]; then
   printf "Enter installation directory [%s]: " "$DEFAULT_WORKDIR"
   read -r input_dir
   WORKDIR=${input_dir:-$DEFAULT_WORKDIR}
+elif [ "$USE_DEFAULTS" = "1" ] && [ -z "$WORKDIR" ]; then
+  echo "Using default installation directory: $DEFAULT_WORKDIR"
 fi
 
 WORKDIR="${WORKDIR:-$DEFAULT_WORKDIR}"
@@ -38,6 +55,354 @@ PLIST_CONTENT_B64="__PLIST_TEMPLATE_B64__"
 
 die(){ echo "ERROR: $*" >&2; exit 1; }
 need_macos(){ [ "$(uname -s)" = "Darwin" ] || die "macOS only."; }
+
+check_dependencies() {
+    echo "Checking system dependencies..."
+    echo ""
+
+    HAS_NETWORKSETUP=0
+    HAS_IPCONFIG=0
+    HAS_SWIFT=0
+    HAS_LAUNCHCTL=0
+    HAS_PING=0
+    HAS_CURL=0
+
+    MISSING_CRITICAL=""
+    MISSING_OPTIONAL=""
+
+    # Check for networksetup (should be built-in on macOS)
+    if command -v networksetup >/dev/null 2>&1; then
+        echo "✅ networksetup found"
+        HAS_NETWORKSETUP=1
+    else
+        echo "❌ CRITICAL: networksetup not found!"
+        MISSING_CRITICAL="${MISSING_CRITICAL}networksetup "
+    fi
+
+    # Check for ipconfig (should be built-in)
+    if command -v ipconfig >/dev/null 2>&1; then
+        echo "✅ ipconfig found"
+        HAS_IPCONFIG=1
+    else
+        echo "❌ CRITICAL: ipconfig not found!"
+        MISSING_CRITICAL="${MISSING_CRITICAL}ipconfig "
+    fi
+
+    # Check for Swift (needed to compile the watcher)
+    if command -v swift >/dev/null 2>&1 || command -v swiftc >/dev/null 2>&1; then
+        echo "✅ Swift compiler found"
+        HAS_SWIFT=1
+    else
+        echo "❌ CRITICAL: Swift compiler not found!"
+        MISSING_CRITICAL="${MISSING_CRITICAL}xcode-cli-tools "
+    fi
+
+    # Check for ping (should be built-in)
+    if command -v ping >/dev/null 2>&1; then
+        echo "✅ ping found"
+        HAS_PING=1
+    else
+        echo "⚠️  WARNING: ping not found"
+        MISSING_OPTIONAL="${MISSING_OPTIONAL}ping "
+    fi
+
+    # Check for curl (usually built-in on modern macOS)
+    if command -v curl >/dev/null 2>&1; then
+        echo "✅ curl found - HTTP connectivity checks available"
+        HAS_CURL=1
+    else
+        echo "ℹ️  curl not found (optional - needed for HTTP connectivity checks)"
+    fi
+
+    # Check for launchctl (should be built-in)
+    if command -v launchctl >/dev/null 2>&1; then
+        echo "✅ launchctl found"
+        HAS_LAUNCHCTL=1
+    else
+        echo "❌ CRITICAL: launchctl not found!"
+        MISSING_CRITICAL="${MISSING_CRITICAL}launchctl "
+    fi
+
+    echo ""
+
+    # Handle missing dependencies
+    if [ -n "$MISSING_CRITICAL" ] || [ -n "$MISSING_OPTIONAL" ]; then
+        if [ -n "$MISSING_CRITICAL" ]; then
+            echo "❌ Critical dependencies missing: $MISSING_CRITICAL"
+        fi
+        if [ -n "$MISSING_OPTIONAL" ]; then
+            echo "⚠️  Optional dependencies missing: $MISSING_OPTIONAL"
+        fi
+        echo ""
+
+        if [ -t 0 ]; then
+            # Check if we can install anything
+            CAN_INSTALL=0
+            if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                CAN_INSTALL=1
+            fi
+
+            if [ $CAN_INSTALL -eq 1 ]; then
+                if [ "$USE_DEFAULTS" = "1" ]; then
+                    install_deps="y"
+                    echo "Auto-install mode: Installing dependencies automatically..."
+                else
+                    printf "Would you like to install missing dependencies automatically? (y/N): "
+                    read -r install_deps
+                fi
+
+                if [ "$install_deps" = "y" ] || [ "$install_deps" = "Y" ]; then
+                    echo ""
+                    echo "Installing dependencies..."
+
+                    # Install Xcode Command Line Tools (includes Swift)
+                    if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                        echo ""
+                        echo "Installing Xcode Command Line Tools..."
+                        echo "A dialog will appear. Please click 'Install' and wait for completion."
+                        echo ""
+
+                        # Trigger Xcode CLI tools installation
+                        xcode-select --install 2>/dev/null || true
+
+                        echo ""
+                        echo "⏳ Waiting for Xcode Command Line Tools installation..."
+                        echo "   This may take several minutes. Please complete the installation in the dialog."
+                        echo ""
+                        printf "Press Enter once the installation is complete..."
+                        read -r _wait
+
+                        # Verify Swift is now available
+                        if command -v swift >/dev/null 2>&1 || command -v swiftc >/dev/null 2>&1; then
+                            echo "✅ Swift compiler installed successfully!"
+                            HAS_SWIFT=1
+                        else
+                            echo "❌ Swift compiler still not found after installation."
+                            echo "   The Xcode Command Line Tools installation may have failed."
+                            echo ""
+
+                            # Offer Homebrew as alternative
+                            if [ "$USE_DEFAULTS" = "1" ]; then
+                                try_brew="y"
+                                echo "Auto-install mode: Will try Homebrew installation..."
+                            else
+                                printf "Would you like to try installing Swift via Homebrew instead? (Y/n): "
+                                read -r try_brew
+                            fi
+
+                            if [ "$try_brew" != "n" ] && [ "$try_brew" != "N" ]; then
+                                echo ""
+                                # Check if Homebrew is installed
+                                if ! command -v brew >/dev/null 2>&1; then
+                                    echo "Homebrew is not installed."
+                                    if [ "$USE_DEFAULTS" = "1" ]; then
+                                        install_brew="y"
+                                        echo "Auto-install mode: Installing Homebrew..."
+                                    else
+                                        printf "Install Homebrew now? (Y/n): "
+                                        read -r install_brew
+                                    fi
+
+                                    if [ "$install_brew" != "n" ] && [ "$install_brew" != "N" ]; then
+                                        echo ""
+                                        echo "Installing Homebrew..."
+                                        echo "This may take several minutes and requires sudo access."
+                                        echo ""
+
+                                        # Install Homebrew (as the real user, not root)
+                                        if [ -n "${SUDO_USER:-}" ]; then
+                                            sudo -u "$SUDO_USER" /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                                        else
+                                            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                                        fi
+
+                                        # Check if brew is now available
+                                        if ! command -v brew >/dev/null 2>&1; then
+                                            # Try common Homebrew paths
+                                            if [ -x "/opt/homebrew/bin/brew" ]; then
+                                                export PATH="/opt/homebrew/bin:$PATH"
+                                            elif [ -x "/usr/local/bin/brew" ]; then
+                                                export PATH="/usr/local/bin:$PATH"
+                                            fi
+                                        fi
+
+                                        if command -v brew >/dev/null 2>&1; then
+                                            echo "✅ Homebrew installed successfully!"
+                                        else
+                                            echo "❌ Homebrew installation failed."
+                                            echo "   Please install manually: https://brew.sh"
+                                            exit 1
+                                        fi
+                                    else
+                                        echo "Homebrew installation declined. Cannot proceed without Swift compiler."
+                                        exit 1
+                                    fi
+                                fi
+
+                                # Now install Swift via Homebrew
+                                echo ""
+                                echo "Installing Swift via Homebrew..."
+                                if [ -n "${SUDO_USER:-}" ]; then
+                                    sudo -u "$SUDO_USER" brew install swift
+                                else
+                                    brew install swift
+                                fi
+
+                                # Verify Swift is now available
+                                if command -v swift >/dev/null 2>&1 || command -v swiftc >/dev/null 2>&1; then
+                                    echo "✅ Swift compiler installed successfully via Homebrew!"
+                                    HAS_SWIFT=1
+                                else
+                                    echo "❌ Swift installation via Homebrew failed."
+                                    echo "   Please try manually: brew install swift"
+                                    exit 1
+                                fi
+                            else
+                                echo ""
+                                echo "Installation cancelled. Swift compiler is required to continue."
+                                echo ""
+                                echo "Manual installation options:"
+                                echo "  1. Retry: xcode-select --install"
+                                echo "  2. Install Homebrew and Swift:"
+                                echo "     /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+                                echo "     brew install swift"
+                                exit 1
+                            fi
+                        fi
+                    fi
+
+                    echo ""
+
+                    # Re-check critical dependencies
+                    if [ -n "$MISSING_CRITICAL" ]; then
+                        # Check for built-in tools that should never be missing
+                        if echo "$MISSING_CRITICAL" | grep -qE "networksetup|ipconfig|launchctl"; then
+                            echo "❌ Critical macOS system tools are missing."
+                            echo "   Your macOS installation may be corrupted."
+                            echo -n "   Tools missing:"
+                            echo "$MISSING_CRITICAL" | grep -qw "networksetup" && echo -n " networksetup"
+                            echo "$MISSING_CRITICAL" | grep -qw "ipconfig" && echo -n " ipconfig"
+                            echo "$MISSING_CRITICAL" | grep -qw "launchctl" && echo -n " launchctl"
+                            echo ""
+                            exit 1
+                        fi
+                    fi
+
+                    if [ -n "$MISSING_OPTIONAL" ]; then
+                        if echo "$MISSING_OPTIONAL" | grep -q "ping"; then
+                            echo "⚠️  Note: ping is still not available"
+                            echo "   Internet connectivity monitoring will be limited to basic checks"
+                        fi
+                    fi
+
+                    echo ""
+                    echo "✅ Critical dependencies satisfied!"
+                    echo ""
+                else
+                    # User declined installation
+                    if [ -n "$MISSING_CRITICAL" ]; then
+                        echo ""
+                        echo "❌ Cannot continue without critical dependencies."
+                        if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                            echo ""
+                            echo "Swift compiler is required to build the network watcher."
+                            echo "Please install Xcode Command Line Tools:"
+                            echo "  xcode-select --install"
+                        fi
+                        if echo "$MISSING_CRITICAL" | grep -qE "networksetup|ipconfig|launchctl"; then
+                            echo ""
+                            echo -n "Missing critical macOS system tools:"
+                            echo "$MISSING_CRITICAL" | grep -qw "networksetup" && echo -n " networksetup"
+                            echo "$MISSING_CRITICAL" | grep -qw "ipconfig" && echo -n " ipconfig"
+                            echo "$MISSING_CRITICAL" | grep -qw "launchctl" && echo -n " launchctl"
+                            echo ""
+                            echo "Your macOS installation may be corrupted."
+                        fi
+                        exit 1
+                    else
+                        # Only optional missing
+                        echo ""
+                        echo "Continuing with optional dependencies missing."
+                        echo ""
+                        if echo "$MISSING_OPTIONAL" | grep -q "ping"; then
+                            echo "⚠️  Limited functionality:"
+                            echo "   • Internet connectivity monitoring will use basic checks only"
+                            echo "   • Gateway ping and custom ping targets won't be available"
+                        fi
+                        echo ""
+                    fi
+                fi
+            else
+                # Cannot auto-install anything
+                if [ -n "$MISSING_CRITICAL" ]; then
+                    echo "❌ Cannot continue: Critical dependencies missing."
+                    echo "   Your macOS system tools appear to be corrupted."
+                    exit 1
+                else
+                    printf "Continue with limited functionality? (y/N): "
+                    read -r continue_install
+                    if [ "$continue_install" != "y" ] && [ "$continue_install" != "Y" ]; then
+                        echo "Installation cancelled."
+                        exit 0
+                    fi
+                    echo ""
+                fi
+            fi
+        else
+            # Non-interactive mode - check for AUTO_INSTALL_DEPS
+            if [ "${AUTO_INSTALL_DEPS:-0}" = "1" ]; then
+                echo "Non-interactive mode with AUTO_INSTALL_DEPS=1"
+
+                if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                    echo ""
+                    echo "⚠️  Cannot auto-install Xcode Command Line Tools in non-interactive mode."
+                    echo "   This requires manual interaction with a dialog."
+                    echo ""
+                    echo "Options:"
+                    echo "  1. Run interactively: sudo sh install.sh"
+                    echo "  2. Pre-install: xcode-select --install (then re-run installer)"
+                    echo "  3. Use Homebrew: brew install swift (if you can't use App Store)"
+                    exit 1
+                fi
+
+                if echo "$MISSING_CRITICAL" | grep -qE "networksetup|ipconfig|launchctl"; then
+                    echo "❌ Critical macOS system tools are missing."
+                    echo -n "   Tools missing:"
+                    echo "$MISSING_CRITICAL" | grep -qw "networksetup" && echo -n " networksetup"
+                    echo "$MISSING_CRITICAL" | grep -qw "ipconfig" && echo -n " ipconfig"
+                    echo "$MISSING_CRITICAL" | grep -qw "launchctl" && echo -n " launchctl"
+                    echo ""
+                    echo "   Your macOS installation may be corrupted."
+                    exit 1
+                fi
+
+                echo "⚠️  Continuing with optional dependencies missing."
+                echo ""
+            elif [ -n "$MISSING_CRITICAL" ]; then
+                echo "❌ Cannot continue: Critical dependencies missing."
+                if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                    echo "   Please install: xcode-select --install"
+                    echo "   Or use Homebrew: brew install swift"
+                    echo "   Or run with: sudo AUTO_INSTALL_DEPS=1 sh install.sh (interactive)"
+                fi
+                if echo "$MISSING_CRITICAL" | grep -qE "networksetup|ipconfig|launchctl"; then
+                    echo -n "   System tools missing:"
+                    echo "$MISSING_CRITICAL" | grep -qw "networksetup" && echo -n " networksetup"
+                    echo "$MISSING_CRITICAL" | grep -qw "ipconfig" && echo -n " ipconfig"
+                    echo "$MISSING_CRITICAL" | grep -qw "launchctl" && echo -n " launchctl"
+                    echo ""
+                fi
+                exit 1
+            else
+                echo "⚠️  Continuing with optional dependencies missing."
+                echo ""
+            fi
+        fi
+    else
+        echo "✅ All dependencies satisfied!"
+        echo ""
+    fi
+}
 
 ensure_root(){
   if [ "$(id -u)" -ne 0 ]; then
@@ -142,7 +507,7 @@ detect_interfaces() {
         AUTO_ETH=$(networksetup -listallhardwareports | awk '/Device: en/ {print $2}' | grep -v "^${AUTO_WIFI}$" | head -n 1) || AUTO_ETH=""
     fi
 
-    if [ -t 0 ]; then
+    if [ -t 0 ] && [ "$USE_DEFAULTS" = "0" ]; then
         echo ""
         echo "Available network interfaces:"
         networksetup -listallhardwareports
@@ -283,6 +648,20 @@ detect_interfaces() {
         else
             INTERFACE_PRIORITY=""
         fi
+    elif [ "$USE_DEFAULTS" = "1" ]; then
+        echo "Auto-install mode: Using detected interfaces and recommended defaults..."
+        WIFI_DEV="$AUTO_WIFI"
+        ETH_DEV="$AUTO_ETH"
+        TIMEOUT="${TIMEOUT:-7}"
+        CHECK_INTERNET="${CHECK_INTERNET:-1}"
+        CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
+        CHECK_METHOD="${CHECK_METHOD:-ping}"
+        CHECK_TARGET="${CHECK_TARGET:-8.8.8.8}"
+        LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
+        INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
+        echo "  Wi-Fi: $WIFI_DEV"
+        echo "  Ethernet: $ETH_DEV"
+        echo "  Internet monitoring: Enabled (ping to 8.8.8.8 every 30s)"
     else
         WIFI_DEV="$AUTO_WIFI"
         ETH_DEV="$AUTO_ETH"
@@ -414,6 +793,10 @@ main(){
     echo "TEST_MODE=1: skipping macOS install steps."
     exit 0
   fi
+
+  # Check dependencies before proceeding
+  check_dependencies
+
   ensure_root
   cleanup_existing
   echo ""

@@ -2,8 +2,13 @@
 # This script is self-contained and includes the switcher logic and uninstaller.
 
 param(
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$Auto,
+    [switch]$Defaults
 )
+
+# Set USE_DEFAULTS if either -Auto or -Defaults is specified
+$USE_DEFAULTS = $Auto -or $Defaults
 
 $TaskName = "EthWifiAutoSwitcher"
 $DefaultInstallDir = if ($env:TEST_MODE -eq "1") { Join-Path $env:TEMP "EthWifiAutoTest" } else { "$env:ProgramFiles\EthWifiAuto" }
@@ -69,9 +74,11 @@ function Install {
     }
 
     $InstallDir = $DefaultInstallDir
-    if ([Environment]::UserInteractive) {
+    if ([Environment]::UserInteractive -and -not $USE_DEFAULTS) {
         $userInput = Read-Host "Enter installation directory [$DefaultInstallDir]"
         if ($userInput) { $InstallDir = $userInput }
+    } elseif ($USE_DEFAULTS) {
+        Write-Host "Using default installation directory: $DefaultInstallDir"
     }
 
     $LogDir = if ($env:ProgramData) { Join-Path $env:ProgramData "EthWifiAuto" } else { Join-Path $InstallDir "logs" }
@@ -120,7 +127,7 @@ function Install {
     Write-Host "  Wi-Fi:    $autoWifi"
     Write-Host ""
 
-    if ([Environment]::UserInteractive -and ($autoEth -ne "Not detected" -or $autoWifi -ne "Not detected")) {
+    if ([Environment]::UserInteractive -and -not $USE_DEFAULTS -and ($autoEth -ne "Not detected" -or $autoWifi -ne "Not detected")) {
         Write-Host "Press Enter to use auto-detected values, or type interface names to override:"
         $ethInput = Read-Host "Ethernet interface [$autoEth]"
         if (-not $ethInput) { $ethInput = $autoEth }
@@ -243,7 +250,23 @@ function Install {
         } else {
             $interfacePriority = ""
         }
+    } elseif ($USE_DEFAULTS) {
+        # Auto mode: Use detected interfaces and recommended defaults
+        Write-Host "Auto-install mode: Using detected interfaces and recommended defaults..."
+        $ethInput = $autoEth
+        $wifiInput = $autoWifi
+        $timeout = 7
+        $checkInternet = 1
+        $checkMethod = "ping"
+        $checkTarget = "8.8.8.8"
+        $checkInterval = 30
+        $logCheckAttempts = 0
+        $interfacePriority = ""
+        Write-Host "  Ethernet: $ethInput"
+        Write-Host "  Wi-Fi: $wifiInput"
+        Write-Host "  Internet monitoring: Enabled (ping to 8.8.8.8 every 30s)"
     } else {
+        # Non-interactive mode: Use environment variables or defaults
         $ethInput = if ($envEth) { $envEth } else { $autoEth }
         $wifiInput = if ($envWifi) { $envWifi } else { $autoWifi }
         $timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }

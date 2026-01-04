@@ -4,6 +4,20 @@ set -eu
 # Universal Ethernet/Wi-Fi Auto Switcher for Linux
 # This script is self-contained and includes the switcher logic and uninstaller.
 
+# Parse command line flags
+USE_DEFAULTS=0
+for arg in "$@"; do
+    case "$arg" in
+        --auto|--defaults)
+            USE_DEFAULTS=1
+            AUTO_INSTALL_DEPS=1
+            ;;
+        --uninstall)
+            # Handled at end of script - skips install() and calls uninstall()
+            ;;
+    esac
+done
+
 DEFAULT_INSTALL_DIR="/opt/eth-wifi-auto"
 SERVICE_NAME="eth-wifi-auto"
 SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
@@ -20,6 +34,326 @@ BACKEND_NMCLI_B64="__BACKEND_NMCLI_B64__"
 BACKEND_IP_B64="__BACKEND_IP_B64__"
 SWITCHER_B64="__SWITCHER_B64__"
 UNINSTALLER_B64="__UNINSTALLER_B64__"
+
+detect_distro() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo "$ID"
+    elif [ -f /etc/debian_version ]; then
+        echo "debian"
+    elif [ -f /etc/redhat-release ]; then
+        echo "rhel"
+    elif [ -f /etc/arch-release ]; then
+        echo "arch"
+    else
+        echo "unknown"
+    fi
+}
+
+get_install_cmd() {
+    distro="$1"
+    case "$distro" in
+        ubuntu|debian|linuxmint|pop)
+            echo "apt install -y"
+            ;;
+        fedora|rhel|centos|rocky|almalinux)
+            echo "dnf install -y"
+            ;;
+        arch|manjaro|endeavouros)
+            echo "pacman -S --noconfirm"
+            ;;
+        opensuse*|suse)
+            echo "zypper install -y"
+            ;;
+        alpine)
+            echo "apk add"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+install_package() {
+    pkg="$1"
+    distro="$2"
+    install_cmd="$3"
+
+    case "$distro" in
+        ubuntu|debian|linuxmint|pop)
+            case "$pkg" in
+                networkmanager) sudo apt update >/dev/null 2>&1; sudo $install_cmd network-manager ;;
+                iproute2) sudo apt update >/dev/null 2>&1; sudo $install_cmd iproute2 ;;
+                rfkill) sudo apt update >/dev/null 2>&1; sudo $install_cmd rfkill ;;
+                ping) sudo apt update >/dev/null 2>&1; sudo $install_cmd iputils-ping ;;
+                curl) sudo apt update >/dev/null 2>&1; sudo $install_cmd curl ;;
+                systemd) echo "systemd should be pre-installed" ;;
+            esac
+            ;;
+        fedora|rhel|centos|rocky|almalinux)
+            case "$pkg" in
+                networkmanager) sudo $install_cmd NetworkManager ;;
+                iproute2) sudo $install_cmd iproute ;;
+                rfkill) sudo $install_cmd util-linux ;;
+                ping) sudo $install_cmd iputils ;;
+                curl) sudo $install_cmd curl ;;
+                systemd) echo "systemd should be pre-installed" ;;
+            esac
+            ;;
+        arch|manjaro|endeavouros)
+            case "$pkg" in
+                networkmanager) sudo $install_cmd networkmanager ;;
+                iproute2) sudo $install_cmd iproute2 ;;
+                rfkill) sudo $install_cmd util-linux ;;
+                ping) sudo $install_cmd iputils ;;
+                curl) sudo $install_cmd curl ;;
+                systemd) echo "systemd should be pre-installed" ;;
+            esac
+            ;;
+        *)
+            echo "⚠️  Unknown distribution, cannot auto-install $pkg"
+            return 1
+            ;;
+    esac
+}
+
+check_dependencies() {
+    echo "Checking system dependencies..."
+    echo ""
+
+    HAS_NMCLI=0
+    HAS_IP=0
+    HAS_RFKILL=0
+    HAS_SYSTEMD=0
+    HAS_PING=0
+    HAS_CURL=0
+
+    MISSING_CRITICAL=""
+    MISSING_OPTIONAL=""
+
+    DISTRO=$(detect_distro)
+    INSTALL_CMD=$(get_install_cmd "$DISTRO")
+
+    # Check for network tools
+    if command -v nmcli >/dev/null 2>&1; then
+        echo "✅ NetworkManager (nmcli) found - Full functionality available"
+        HAS_NMCLI=1
+    fi
+    if command -v ip >/dev/null 2>&1; then
+        echo "✅ iproute2 (ip command) found"
+        HAS_IP=1
+    fi
+
+    # Check rfkill
+    if command -v rfkill >/dev/null 2>&1; then
+        echo "✅ rfkill found - WiFi radio control available"
+        HAS_RFKILL=1
+    fi
+
+    # Check systemd
+    if command -v systemctl >/dev/null 2>&1; then
+        echo "✅ systemd found"
+        HAS_SYSTEMD=1
+    fi
+
+    # Check ping
+    if command -v ping >/dev/null 2>&1; then
+        echo "✅ ping found"
+        HAS_PING=1
+    fi
+
+    # Check curl
+    if command -v curl >/dev/null 2>&1; then
+        echo "✅ curl found - HTTP connectivity checks available"
+        HAS_CURL=1
+    fi
+
+    echo ""
+
+    # Determine what's missing
+    if [ $HAS_NMCLI -eq 0 ] && [ $HAS_IP -eq 0 ]; then
+        MISSING_CRITICAL="${MISSING_CRITICAL}networkmanager iproute2 "
+        echo "❌ CRITICAL: No supported network tools found!"
+        echo "   Need either NetworkManager (nmcli) or iproute2 (ip command)"
+    fi
+
+    # rfkill is CRITICAL if nmcli is missing (ip backend needs it for wifi control)
+    if [ $HAS_NMCLI -eq 0 ] && [ $HAS_RFKILL -eq 0 ]; then
+        MISSING_CRITICAL="${MISSING_CRITICAL}rfkill "
+        echo "❌ CRITICAL: rfkill not found (required when NetworkManager is not available)"
+    elif [ $HAS_NMCLI -eq 1 ] && [ $HAS_RFKILL -eq 0 ]; then
+        echo "ℹ️  rfkill not found (not needed with NetworkManager)"
+    fi
+
+    if [ $HAS_SYSTEMD -eq 0 ]; then
+        MISSING_CRITICAL="${MISSING_CRITICAL}systemd "
+        echo "❌ CRITICAL: systemd not found (required for service management)"
+    fi
+
+    if [ $HAS_PING -eq 0 ]; then
+        MISSING_OPTIONAL="${MISSING_OPTIONAL}ping "
+        echo "⚠️  WARNING: ping not found (needed for internet monitoring)"
+    fi
+
+    if [ $HAS_CURL -eq 0 ]; then
+        echo "ℹ️  curl not found (optional - needed for HTTP connectivity checks)"
+    fi
+
+    echo ""
+
+    # Handle missing dependencies
+    if [ -n "$MISSING_CRITICAL" ] || [ -n "$MISSING_OPTIONAL" ]; then
+        if [ -n "$MISSING_CRITICAL" ]; then
+            echo "❌ Critical dependencies missing: $MISSING_CRITICAL"
+        fi
+        if [ -n "$MISSING_OPTIONAL" ]; then
+            echo "⚠️  Optional dependencies missing: $MISSING_OPTIONAL"
+        fi
+        echo ""
+
+        if [ -n "$INSTALL_CMD" ] && [ -t 0 ]; then
+            printf "Would you like to install missing dependencies automatically? (y/N): "
+            read -r install_deps
+
+            if [ "$install_deps" = "y" ] || [ "$install_deps" = "Y" ]; then
+                echo ""
+                echo "Installing dependencies..."
+
+                # Install critical dependencies
+                for pkg in $MISSING_CRITICAL; do
+                    # Special handling: offer choice between networkmanager and iproute2
+                    if [ "$pkg" = "networkmanager" ] || [ "$pkg" = "iproute2" ]; then
+                        if echo "$MISSING_CRITICAL" | grep -q "networkmanager"; then
+                            echo ""
+                            echo "Choose network backend:"
+                            echo "  1) NetworkManager (recommended - full functionality)"
+                            echo "  2) iproute2 + rfkill (minimal)"
+                            printf "Enter choice [1]: "
+                            read -r net_choice
+                            net_choice=${net_choice:-1}
+
+                            if [ "$net_choice" = "1" ]; then
+                                echo "Installing NetworkManager..."
+                                install_package "networkmanager" "$DISTRO" "$INSTALL_CMD"
+                                # Remove rfkill from critical if we're installing networkmanager
+                                MISSING_CRITICAL=$(echo "$MISSING_CRITICAL" | sed 's/rfkill //')
+                            else
+                                echo "Installing iproute2..."
+                                install_package "iproute2" "$DISTRO" "$INSTALL_CMD"
+                                if echo "$MISSING_CRITICAL" | grep -q "rfkill"; then
+                                    echo "Installing rfkill..."
+                                    install_package "rfkill" "$DISTRO" "$INSTALL_CMD"
+                                fi
+                            fi
+                            # Skip processing these packages again
+                            MISSING_CRITICAL=$(echo "$MISSING_CRITICAL" | sed 's/networkmanager //' | sed 's/iproute2 //')
+                            continue
+                        fi
+                    fi
+
+                    if [ -n "$pkg" ]; then
+                        echo "Installing $pkg..."
+                        install_package "$pkg" "$DISTRO" "$INSTALL_CMD"
+                    fi
+                done
+
+                # Install optional dependencies
+                for pkg in $MISSING_OPTIONAL; do
+                    if [ -n "$pkg" ]; then
+                        echo "Installing $pkg..."
+                        install_package "$pkg" "$DISTRO" "$INSTALL_CMD"
+                    fi
+                done
+
+                echo ""
+                echo "✅ Dependencies installed. Re-checking..."
+                echo ""
+
+                # Re-check after installation
+                if ! command -v nmcli >/dev/null 2>&1 && ! command -v ip >/dev/null 2>&1; then
+                    echo "❌ Failed to install network tools. Cannot continue."
+                    exit 1
+                fi
+                if ! command -v systemctl >/dev/null 2>&1; then
+                    echo "❌ Failed to install systemd. Cannot continue."
+                    exit 1
+                fi
+                if ! command -v nmcli >/dev/null 2>&1 && ! command -v rfkill >/dev/null 2>&1; then
+                    echo "❌ Failed to install rfkill (required for ip backend). Cannot continue."
+                    exit 1
+                fi
+
+                echo "✅ All critical dependencies satisfied!"
+                echo ""
+            else
+                # User declined installation
+                if [ -n "$MISSING_CRITICAL" ]; then
+                    echo ""
+                    echo "❌ Cannot continue without critical dependencies."
+                    echo "   Critical: $MISSING_CRITICAL"
+                    echo ""
+                    echo "Please install manually or re-run and accept automatic installation."
+                    exit 1
+                else
+                    # Only optional missing
+                    echo ""
+                    echo "Continuing with optional dependencies missing."
+                    echo "Some features may be limited."
+                    echo ""
+                fi
+            fi
+        else
+            # Non-interactive mode - check for AUTO_INSTALL_DEPS
+            if [ "${AUTO_INSTALL_DEPS:-0}" = "1" ] && [ -n "$INSTALL_CMD" ]; then
+                echo "Non-interactive mode with AUTO_INSTALL_DEPS=1: Installing dependencies..."
+                echo ""
+
+                # Install critical dependencies
+                for pkg in $MISSING_CRITICAL; do
+                    # Special handling for network tools
+                    if [ "$pkg" = "networkmanager" ] || [ "$pkg" = "iproute2" ]; then
+                        if echo "$MISSING_CRITICAL" | grep -q "networkmanager"; then
+                            # Default to NetworkManager in non-interactive mode
+                            echo "Installing NetworkManager..."
+                            install_package "networkmanager" "$DISTRO" "$INSTALL_CMD"
+                            MISSING_CRITICAL=$(echo "$MISSING_CRITICAL" | sed 's/rfkill //')
+                            MISSING_CRITICAL=$(echo "$MISSING_CRITICAL" | sed 's/networkmanager //' | sed 's/iproute2 //')
+                            continue
+                        fi
+                    fi
+
+                    if [ -n "$pkg" ]; then
+                        echo "Installing $pkg..."
+                        install_package "$pkg" "$DISTRO" "$INSTALL_CMD"
+                    fi
+                done
+
+                # Install optional dependencies
+                for pkg in $MISSING_OPTIONAL; do
+                    if [ -n "$pkg" ]; then
+                        echo "Installing $pkg..."
+                        install_package "$pkg" "$DISTRO" "$INSTALL_CMD"
+                    fi
+                done
+
+                echo ""
+                echo "✅ Dependencies installed."
+                echo ""
+            elif [ -n "$MISSING_CRITICAL" ]; then
+                echo "❌ Cannot continue: Critical dependencies missing."
+                echo "   Please install: $MISSING_CRITICAL"
+                echo "   Or run with: sudo AUTO_INSTALL_DEPS=1 sh install.sh"
+                exit 1
+            else
+                echo "⚠️  Continuing with optional dependencies missing."
+                echo ""
+            fi
+        fi
+    else
+        echo "✅ All dependencies satisfied!"
+        echo ""
+    fi
+}
 
 stop_helper_processes() {
     helper_pids=$(pgrep -f "eth-wifi-auto.sh" || true)
@@ -43,6 +377,9 @@ install() {
         echo "Please run as root (sudo)"
         exit 1
     fi
+
+    # Check dependencies before proceeding
+    check_dependencies
 
     # Cleanup existing installation if found
     if [ -f "$SERVICE_FILE" ]; then
@@ -73,10 +410,12 @@ install() {
     fi
 
     INSTALL_DIR="$DEFAULT_INSTALL_DIR"
-    if [ -t 0 ]; then
+    if [ -t 0 ] && [ "$USE_DEFAULTS" = "0" ]; then
         printf "Enter installation directory [%s]: " "$DEFAULT_INSTALL_DIR"
         read -r input_dir
         INSTALL_DIR=${input_dir:-$DEFAULT_INSTALL_DIR}
+    elif [ "$USE_DEFAULTS" = "1" ]; then
+        echo "Using default installation directory: $DEFAULT_INSTALL_DIR"
     fi
 
     echo ""
@@ -165,7 +504,7 @@ install() {
         fi
     fi
 
-    if [ -t 0 ]; then
+    if [ -t 0 ] && [ "$USE_DEFAULTS" = "0" ]; then
         echo ""
         echo "Available network interfaces:"
         if command -v nmcli > /dev/null 2>&1; then
@@ -389,6 +728,20 @@ install() {
         else
             INTERFACE_PRIORITY=""
         fi
+    elif [ "$USE_DEFAULTS" = "1" ]; then
+        echo "Auto-install mode: Using detected interfaces and recommended defaults..."
+        ETH_DEV="$AUTO_ETH"
+        WIFI_DEV="$AUTO_WIFI"
+        TIMEOUT="${TIMEOUT:-7}"
+        CHECK_INTERNET="${CHECK_INTERNET:-1}"
+        CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
+        CHECK_METHOD="${CHECK_METHOD:-ping}"
+        CHECK_TARGET="${CHECK_TARGET:-8.8.8.8}"
+        LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
+        INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
+        echo "  Ethernet: $ETH_DEV"
+        echo "  Wi-Fi: $WIFI_DEV"
+        echo "  Internet monitoring: Enabled (ping to 8.8.8.8 every 30s)"
     else
         ETH_DEV="$AUTO_ETH"
         WIFI_DEV="$AUTO_WIFI"
