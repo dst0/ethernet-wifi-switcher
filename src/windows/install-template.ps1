@@ -343,11 +343,32 @@ function Install {
     Write-Host ""
     Write-Host "✅ Installation complete."
     Write-Host ""
-    Write-Host "The task is now running. It will automatically:"
-    Write-Host "  • Turn Wi-Fi off when Ethernet is connected"
-    Write-Host "  • Turn Wi-Fi on when Ethernet is disconnected"
-    Write-Host "  • Continue working after OS reboot"
-    Write-Host "Logs: $LogDir\switcher.log (created after first run). Tail with: Get-Content -Path `"$LogDir\switcher.log`" -Wait"
+    Write-Host "The scheduled task is now running. Starting in 3 seconds..."
+    Write-Host ""
+    Write-Host "Core Behavior:"
+    Write-Host "  • Turns Wi-Fi OFF when Ethernet is connected"
+    Write-Host "  • Turns Wi-Fi ON when Ethernet is disconnected"
+    Write-Host "  • Continues working after OS reboot"
+    Write-Host ""
+    if ($checkInternet -eq 1) {
+        Write-Host "Internet Monitoring: Enabled"
+        if ($checkMethod -eq "gateway") {
+            Write-Host "  • Checks: Gateway connectivity every $checkInterval seconds"
+        } elseif ($checkMethod -eq "ping") {
+            Write-Host "  • Checks: Ping to $checkTarget every $checkInterval seconds"
+        } elseif ($checkMethod -eq "curl") {
+            Write-Host "  • Checks: HTTP connectivity to $checkTarget every $checkInterval seconds"
+        }
+        Write-Host ""
+    }
+    Write-Host "Logging:"
+    Write-Host "  Log file location: $LogDir\switcher.log (created after first run)"
+    Write-Host "  View real-time logs:"
+    Write-Host "    Get-Content -Path `"$LogDir\switcher.log`" -Wait"
+    Write-Host "  View last 50 lines:"
+    Write-Host "    Get-Content -Path `"$LogDir\switcher.log`" -Tail 50"
+    Write-Host "  View in PowerShell ISE:"
+    Write-Host "    ise `"$LogDir\switcher.log`""
     Write-Host ""
     Write-Host "To uninstall, run:"
     Write-Host "  powershell.exe -ExecutionPolicy Bypass -File `"$UninstallerPath`""

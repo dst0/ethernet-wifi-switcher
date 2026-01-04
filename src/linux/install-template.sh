@@ -831,11 +831,31 @@ EOF
     echo ""
     echo "✅ Installation complete."
     echo ""
-    echo "The service is now running. It will automatically:"
-    echo "  • Turn Wi-Fi off when Ethernet is connected"
-    echo "  • Turn Wi-Fi on when Ethernet is disconnected"
-    echo "  • Continue working after OS reboot"
-    echo "Logs: sudo journalctl -u $SERVICE_NAME -f"
+    echo "The service is now running. Starting in 3 seconds..."
+    echo ""
+    echo "Core Behavior:"
+    echo "  • Turns Wi-Fi OFF when Ethernet is connected"
+    echo "  • Turns Wi-Fi ON when Ethernet is disconnected"
+    echo "  • Continues working after OS reboot"
+    echo ""
+    if [ "$CHECK_INTERNET" = "1" ]; then
+        echo "Internet Monitoring: Enabled"
+        if [ "$CHECK_METHOD" = "gateway" ]; then
+            echo "  • Checks: Gateway connectivity every $CHECK_INTERVAL seconds"
+        elif [ "$CHECK_METHOD" = "ping" ]; then
+            echo "  • Checks: Ping to $CHECK_TARGET every $CHECK_INTERVAL seconds"
+        elif [ "$CHECK_METHOD" = "curl" ]; then
+            echo "  • Checks: HTTP connectivity to $CHECK_TARGET every $CHECK_INTERVAL seconds"
+        fi
+        echo ""
+    fi
+    echo "Logging:"
+    echo "  View real-time logs:"
+    echo "    sudo journalctl -u $SERVICE_NAME -f"
+    echo "  View last 50 lines:"
+    echo "    sudo journalctl -u $SERVICE_NAME -n 50"
+    echo "  View today's logs:"
+    echo "    sudo journalctl -u $SERVICE_NAME --since today"
     echo ""
     echo "To uninstall, run:"
     echo "  sudo sh \"$WORK_UNINSTALL\""
