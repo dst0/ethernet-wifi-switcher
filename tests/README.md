@@ -10,18 +10,32 @@ tests/
 │   ├── mock.sh            # Mock command framework
 │   └── assert.sh          # Assertion functions
 ├── unit/                  # Unit tests with mocked commands
-│   ├── test_linux_backends.sh               # Backend function tests
-│   ├── test_linux_interface_detection.sh    # Interface detection tests
-│   ├── test_linux_complex_scenarios.sh      # Complex edge cases
-│   ├── test_internet_check.sh               # Connectivity check methods
-│   ├── test_internet_failover.sh            # Internet-based failover logic
-│   ├── test_ip_acquisition_retry.sh         # IP retry mechanisms
-│   ├── test_multi_interface.sh              # Priority selection
-│   ├── test_wifi_state_management.sh        # WiFi state transitions
-│   ├── test_wifi_complex_scenarios.sh       # WiFi edge cases
-│   ├── test_macos_interface_and_internet.sh # macOS specific tests
-│   ├── test_windows_basic.sh                # Windows basic tests
-│   └── test_windows_complex_scenarios.sh    # Windows edge cases
+│   ├── auto_defaults_flag.test.sh           # Command-line flag tests
+│   ├── linux_backends.test.sh               # Backend function tests
+│   ├── linux_interface_detection.test.sh    # Interface detection tests
+│   ├── linux_complex_scenarios.test.sh      # Complex edge cases
+│   ├── internet_check.test.sh               # Connectivity check methods (Linux)
+│   ├── internet_failover.test.sh            # Internet-based failover logic (Linux)
+│   ├── ip_acquisition_retry.test.sh         # IP retry mechanisms (Linux)
+│   ├── multi_interface.test.sh              # Priority selection (Linux)
+│   ├── wifi_state_management.test.sh        # WiFi state transitions (Linux)
+│   ├── wifi_complex_scenarios.test.sh       # WiFi edge cases (Linux)
+│   ├── macos_internet_state_logging.test.sh # Internet state logging (macOS)
+│   ├── macos_internet_check.test.sh         # Connectivity checks (macOS)
+│   ├── macos_internet_failover.test.sh      # Failover scenarios (macOS)
+│   ├── macos_ip_acquisition_retry.test.sh   # IP retry mechanisms (macOS)
+│   ├── macos_multi_interface.test.sh        # Priority selection (macOS)
+│   ├── macos_wifi_state_management.test.sh  # WiFi state transitions (macOS)
+│   ├── macos_complex_scenarios.test.sh      # Complex edge cases (macOS)
+│   ├── macos_interface_and_internet.test.sh # macOS-specific tests
+│   ├── windows_basic.test.sh                # Windows basic tests (static)
+│   ├── windows_complex_scenarios.test.sh    # Windows edge cases (static)
+│   ├── internet_state_logging.test.ps1      # Internet state logging (Windows)
+│   ├── internet_check.test.ps1              # Connectivity checks (Windows)
+│   ├── internet_failover.test.ps1           # Failover scenarios (Windows)
+│   ├── ip_acquisition_retry.test.ps1        # IP retry mechanisms (Windows)
+│   ├── multi_interface.test.ps1             # Priority selection (Windows)
+│   └── wifi_state_management.test.ps1       # WiFi state transitions (Windows)
 ├── integration/           # Integration tests in containers
 │   ├── Dockerfile.linux
 │   ├── test_linux_integration.sh
@@ -39,11 +53,21 @@ tests/
 
 ### Unit Tests Only
 ```bash
-# Run specific test
-./tests/unit/test_linux_interface_detection.sh
+# Run specific shell test
+bash tests/unit/linux_interface_detection.test.sh
 
-# Run all unit tests
-for test in tests/unit/test_*.sh; do sh "$test"; done
+# Run specific PowerShell test (requires pwsh)
+pwsh -File tests/unit/internet_state_logging.test.ps1
+
+# Run all shell unit tests
+for test in tests/unit/*.test.sh; do bash "$test"; done
+
+# Run all PowerShell unit tests (requires pwsh)
+for test in tests/unit/*.test.ps1; do pwsh -File "$test"; done
+
+# Run all unit tests (both shell and PowerShell)
+for test in tests/unit/*.test.sh; do bash "$test"; done
+for test in tests/unit/*.test.ps1; do pwsh -File "$test"; done
 ```
 
 ### Integration Tests
@@ -107,24 +131,84 @@ test_summary
 
 Unit tests mock all system commands to test logic in isolation:
 
+### Platform Coverage Summary
+
+| Platform | Language | Test Files | Test Count | Status |
+|----------|----------|-----------|-----------|--------|
+| Linux | Bash/Shell | 11 files | 60+ tests | ✅ Active |
+| macOS | Bash/Shell | 8 files | 52 tests | ✅ Active |
+| Windows | PowerShell | 6 files | 34 tests | ✅ Active |
+| **Total** | **Multiple** | **25 files** | **146+ tests** | **✅ Executable** |
+
 ### Linux Tests
-- **test_linux_backends.sh**: Tests both nmcli and ip backends, verifies all backend functions work correctly
-- **test_linux_interface_detection.sh**: Tests interface detection logic with various tools (nmcli, ip, /sys/class/net)
-- **test_linux_complex_scenarios.sh**: Tests complex edge cases specific to Linux (simultaneous changes, race conditions)
-- **test_internet_check.sh**: Tests all three connectivity check methods (gateway, ping, curl)
-- **test_internet_failover.sh**: Tests internet-based failover scenarios
-- **test_ip_acquisition_retry.sh**: Tests DHCP retry logic and timeout handling
-- **test_multi_interface.sh**: Tests interface priority selection logic with multiple interfaces
-- **test_wifi_state_management.sh**: Tests WiFi state transitions and radio control
-- **test_wifi_complex_scenarios.sh**: Tests complex WiFi scenarios (delayed connections, failover)
-- **test_auto_defaults_flag.sh**: Tests --auto and --defaults command-line flags and their behavior
+- **linux_backends.test.sh**: Tests both nmcli and ip backends, verifies all backend functions work correctly
+- **linux_interface_detection.test.sh**: Tests interface detection logic with various tools (nmcli, ip, /sys/class/net)
+- **linux_complex_scenarios.test.sh**: Tests complex edge cases specific to Linux (simultaneous changes, race conditions)
+- **internet_check.test.sh**: Tests all three connectivity check methods (gateway, ping, curl)
+- **internet_failover.test.sh**: Tests internet-based failover scenarios
+- **internet_state_logging.test.sh**: Tests internet state logging messages (initialization, recovery, loss)
+- **ip_acquisition_retry.test.sh**: Tests DHCP retry logic and timeout handling
+- **multi_interface.test.sh**: Tests interface priority selection logic with multiple interfaces
+- **wifi_state_management.test.sh**: Tests WiFi state transitions and radio control
+- **wifi_complex_scenarios.test.sh**: Tests complex WiFi scenarios (delayed connections, failover)
+- **auto_defaults_flag.test.sh**: Tests --auto and --defaults command-line flags and their behavior
 
 ### macOS Tests
-- **test_macos_interface_and_internet.sh**: Tests macOS-specific interface handling and internet checks
 
-### Windows Tests
-- **test_windows_basic.sh**: Tests basic Windows PowerShell functionality
-- **test_windows_complex_scenarios.sh**: Tests Windows-specific edge cases and state management
+All macOS tests use shell/bash and mock macOS-specific tools (networksetup, ipconfig, ifconfig, etc.):
+
+- **macos_internet_state_logging.test.sh**: Tests internet state logging messages (initialization, recovery, loss)
+- **macos_internet_check.test.sh**: Tests all three connectivity check methods (gateway ping, ICMP ping, HTTP curl)
+- **macos_internet_failover.test.sh**: Tests internet-based failover scenarios (priority switching, recovery, multi-interface)
+- **macos_ip_acquisition_retry.test.sh**: Tests DHCP retry logic using ipconfig and timeout handling
+- **macos_multi_interface.test.sh**: Tests interface priority selection logic with multiple network adapters
+- **macos_wifi_state_management.test.sh**: Tests WiFi state transitions using networksetup
+- **macos_complex_scenarios.test.sh**: Tests complex edge cases specific to macOS (rapid toggling, simultaneous changes)
+- **macos_interface_and_internet.test.sh**: Tests macOS-specific interface handling and internet checks (10 tests)
+
+### Windows Tests (PowerShell Unit Tests)
+
+All Windows tests are executable PowerShell unit tests (`.ps1`) that mock Windows-specific cmdlets (Get-NetAdapter, Get-NetRoute, etc.):
+
+- **internet_state_logging.test.ps1**: Tests internet state logging messages (initialization, recovery, loss)
+- **internet_check.test.ps1**: Tests all three connectivity check methods (gateway ping, ICMP ping, HTTP curl)
+- **internet_failover.test.ps1**: Tests internet-based failover scenarios (priority switching, recovery, multi-interface)
+- **ip_acquisition_retry.test.ps1**: Tests DHCP retry logic and timeout handling
+- **multi_interface.test.ps1**: Tests interface priority selection logic with multiple network adapters
+- **wifi_state_management.test.ps1**: Tests WiFi state transitions and radio control
+
+**Running Windows PowerShell Tests:**
+
+On macOS/Linux (with pwsh installed):
+```bash
+pwsh -File tests/unit/internet_state_logging.test.ps1
+pwsh -File tests/unit/internet_check.test.ps1
+pwsh -File tests/unit/internet_failover.test.ps1
+pwsh -File tests/unit/ip_acquisition_retry.test.ps1
+pwsh -File tests/unit/multi_interface.test.ps1
+pwsh -File tests/unit/wifi_state_management.test.ps1
+
+# Or run all at once:
+for test in tests/unit/*.test.ps1; do echo "=== $(basename $test) ===" && pwsh -File "$test" && echo ""; done
+```
+
+On Windows (native PowerShell):
+```powershell
+pwsh -File tests/unit/internet_state_logging.test.ps1
+# ... or other tests
+
+# Run all:
+Get-ChildItem tests/unit/*.test.ps1 | ForEach-Object { Write-Host "=== $($_.Name) ===" && & pwsh -File $_.FullName; Write-Host "" }
+```
+
+**Test Coverage Summary:**
+- **internet_state_logging.test.ps1**: 7 tests (initialization with/without internet, recovery, loss, no-logging cases, multiple state changes)
+- **internet_check.test.ps1**: 3 tests (gateway check, ICMP ping, HTTP/curl methods)
+- **internet_failover.test.ps1**: 6 tests (priority switching, fallback to WiFi, recovery, multi-interface, no-internet handling)
+- **ip_acquisition_retry.test.ps1**: 6 tests (immediate/delayed IP acquisition, timeouts, interface state, configurable timeouts)
+- **multi_interface.test.ps1**: 6 tests (priority selection, Ethernet priority, fallback, dynamic priority updates)
+- **wifi_state_management.test.ps1**: 6 tests (WiFi detection, enable/disable, state transitions, radio control, connection waits)
+- **Total: 34 Windows-specific tests** (all operating on mocked Get-NetAdapter, Set-NetIPInterface, Test-NetConnection cmdlets)
 
 ### Adding New Unit Tests
 
@@ -181,8 +265,11 @@ test:
 - [x] Add WiFi state management tests
 - [x] Add internet failover tests
 - [x] Add complex scenario tests for all platforms
+- [x] Add Windows PowerShell executable tests (34 tests across 6 files)
+- [x] Add macOS comprehensive test suite (52 tests across 8 files)
+- [ ] Add Windows complex scenario tests
 - [ ] Add macOS integration tests (requires macOS runner)
-- [ ] Add Windows integration tests
+- [ ] Add Windows integration tests (requires Windows runner)
 - [ ] Add code coverage reporting
 - [ ] Add performance benchmarks
 - [ ] Add stress testing for event handling
