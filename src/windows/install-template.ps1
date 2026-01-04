@@ -139,14 +139,16 @@ function Install {
         $timeout = if ($timeoutInput) { [int]$timeoutInput } else { if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 } }
 
         Write-Host ""
-        Write-Host "Internet Connectivity Monitoring (Optional):"
-        Write-Host "  Enable this to monitor actual internet availability, not just link status."
-        Write-Host "  The system will switch to WiFi if Ethernet has no internet access."
+        Write-Host "Periodic Internet Connectivity Monitoring (Optional):"
+        Write-Host "  Enable active monitoring of actual internet availability, not just link status."
+        Write-Host "  The system will periodically check and switch to WiFi if Ethernet has no internet"
+        Write-Host "  and to Ethernet if WiFi has no internet."
+        Write-Host "  Uses minimal resources with timer-based checks (not continuous polling)."
         Write-Host ""
-        $checkInternetInput = Read-Host "Enable internet monitoring? (y/N)"
+        $checkInternetInput = Read-Host "Enable periodic internet monitoring? (y/N)"
         if ($checkInternetInput -eq "y" -or $checkInternetInput -eq "Y") {
             $checkInternet = 1
-            
+
             Write-Host ""
             Write-Host "Select connectivity check method:"
             Write-Host "  1) Ping to gateway (recommended - most reliable and provider-safe)"
@@ -155,7 +157,7 @@ function Install {
             Write-Host ""
             $checkMethodInput = Read-Host "Enter choice [1]"
             $checkMethodChoice = if ($checkMethodInput) { [int]$checkMethodInput } else { 1 }
-            
+
             switch ($checkMethodChoice) {
                 1 {
                     $checkMethod = "gateway"
@@ -187,12 +189,12 @@ function Install {
                     $checkTarget = ""
                 }
             }
-            
+
             Write-Host ""
             $checkIntervalInput = Read-Host "Check interval in seconds [30]"
             $checkInterval = if ($checkIntervalInput) { [int]$checkIntervalInput } else { 30 }
-            Write-Host "Check interval: $($checkInterval)s"
-            
+            Write-Host "Enabled: Will check internet connectivity every $checkInterval seconds using $checkMethod"
+
             Write-Host ""
             $logChecksInput = Read-Host "Log every check attempt? (y/N) [logs only state changes by default]"
             if ($logChecksInput -eq "y" -or $logChecksInput -eq "Y") {
@@ -204,10 +206,42 @@ function Install {
             }
         } else {
             $checkInternet = 0
-            $checkInterval = 30
+            $checkInterval = 0
             $checkMethod = "gateway"
             $checkTarget = ""
             $logCheckAttempts = 0
+            Write-Host "Disabled: Event-driven checks only (no periodic monitoring)"
+        }
+
+        Write-Host ""
+        Write-Host "Multi-Interface Configuration (Optional):"
+        Write-Host "  Configure priority for multiple ethernet or wifi interfaces."
+        Write-Host ""
+        $configPriorityInput = Read-Host "Configure interface priority? (y/N)"
+        if ($configPriorityInput -eq "y" -or $configPriorityInput -eq "Y") {
+            Write-Host ""
+            Write-Host "Available interfaces:"
+            Get-NetAdapter | Where-Object { $_.PhysicalMediaType -match 'Ethernet|802.3|Wireless|Native 802.11' } | ForEach-Object {
+                $hwType = if ($_.PhysicalMediaType -match 'Wireless|Native 802.11') {
+                    "Wi-Fi"
+                } elseif ($_.InterfaceDescription -match 'USB') {
+                    "USB Ethernet"
+                } else {
+                    "Ethernet"
+                }
+                Write-Host "  $($_.Name) ($hwType)"
+            }
+            Write-Host ""
+            Write-Host "Enter interfaces in priority order (comma-separated, highest first):"
+            Write-Host "Example: Ethernet,Ethernet 2,Wi-Fi"
+            $defaultPriority = "$ethInput,$wifiInput"
+            $interfacePriorityInput = Read-Host "Interface priority [$defaultPriority]"
+            $interfacePriority = if ($interfacePriorityInput) { $interfacePriorityInput } else { $defaultPriority }
+            if (-not [string]::IsNullOrEmpty($interfacePriority)) {
+                Write-Host "Priority configured: $interfacePriority"
+            }
+        } else {
+            $interfacePriority = ""
         }
     } else {
         $ethInput = if ($envEth) { $envEth } else { $autoEth }
@@ -218,6 +252,7 @@ function Install {
         $checkMethod = if ($env:CHECK_METHOD) { $env:CHECK_METHOD } else { "gateway" }
         $checkTarget = if ($env:CHECK_TARGET) { $env:CHECK_TARGET } else { "" }
         $logCheckAttempts = if ($env:LOG_CHECK_ATTEMPTS) { [int]$env:LOG_CHECK_ATTEMPTS } else { 0 }
+        $interfacePriority = if ($env:INTERFACE_PRIORITY) { $env:INTERFACE_PRIORITY } else { "" }
     }
 
     if ([string]::IsNullOrWhiteSpace($ethInput) -or [string]::IsNullOrWhiteSpace($wifiInput) -or $ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
@@ -241,6 +276,9 @@ function Install {
         }
         Write-Host "  Check Interval:   $($checkInterval)s"
         Write-Host "  Log All Checks:   $logCheckAttempts"
+    }
+    if (-not [string]::IsNullOrEmpty($interfacePriority)) {
+        Write-Host "  Interface Priority: $interfacePriority"
     }
     Write-Host ""
 
@@ -274,7 +312,7 @@ function Install {
 
     # Set environment variable for the task using XML modification
     $taskXml = Export-ScheduledTask -TaskName $TaskName
-    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERNET</Name>`n        <Value>$checkInternet</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERVAL</Name>`n        <Value>$checkInterval</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_METHOD</Name>`n        <Value>$checkMethod</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_TARGET</Name>`n        <Value>$checkTarget</Value>`n      </Variable>`n      <Variable>`n        <Name>LOG_CHECK_ATTEMPTS</Name>`n        <Value>$logCheckAttempts</Value>`n      </Variable>`n    </EnvironmentVariables>"
+    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERNET</Name>`n        <Value>$checkInternet</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERVAL</Name>`n        <Value>$checkInterval</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_METHOD</Name>`n        <Value>$checkMethod</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_TARGET</Name>`n        <Value>$checkTarget</Value>`n      </Variable>`n      <Variable>`n        <Name>LOG_CHECK_ATTEMPTS</Name>`n        <Value>$logCheckAttempts</Value>`n      </Variable>`n      <Variable>`n        <Name>INTERFACE_PRIORITY</Name>`n        <Value>$interfacePriority</Value>`n      </Variable>`n    </EnvironmentVariables>"
     $taskXml | Register-ScheduledTask -TaskName $TaskName -Force | Out-Null
 
     Start-ScheduledTask -TaskName $TaskName

@@ -16,6 +16,8 @@ if [ "$IS_TEST" = "1" ]; then
 fi
 
 # Embedded components (Base64)
+BACKEND_NMCLI_B64="__BACKEND_NMCLI_B64__"
+BACKEND_IP_B64="__BACKEND_IP_B64__"
 SWITCHER_B64="__SWITCHER_B64__"
 UNINSTALLER_B64="__UNINSTALLER_B64__"
 
@@ -89,13 +91,18 @@ install() {
     fi
 
     # Try nmcli first (NetworkManager - most common on desktop Linux)
+    # Only auto-detect if not already set from environment variables
     if command -v nmcli > /dev/null 2>&1; then
-        AUTO_WIFI=$(nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1 || true)
-        # Method 1: Find ethernet interface that is connected (has IP)
-        AUTO_ETH=$(nmcli device | grep -E "ethernet.*connected" | awk '{print $1}' | head -n 1 || true)
-        # Method 2: Fallback to any ethernet interface
+        if [ -z "$AUTO_WIFI" ]; then
+            AUTO_WIFI=$(nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1 || true)
+        fi
         if [ -z "$AUTO_ETH" ]; then
-            AUTO_ETH=$(nmcli device | grep -E "ethernet" | awk '{print $1}' | head -n 1 || true)
+            # Method 1: Find ethernet interface that is connected (has IP)
+            AUTO_ETH=$(nmcli device | grep -E "ethernet.*connected" | awk '{print $1}' | head -n 1 || true)
+            # Method 2: Fallback to any ethernet interface
+            if [ -z "$AUTO_ETH" ]; then
+                AUTO_ETH=$(nmcli device | grep -E "ethernet" | awk '{print $1}' | head -n 1 || true)
+            fi
         fi
     fi
 
@@ -164,9 +171,55 @@ install() {
         if command -v nmcli > /dev/null 2>&1; then
             nmcli device
         elif command -v ip > /dev/null 2>&1; then
-            ip -brief link show
+            # Show interfaces with type detection for ip command
+            ip -brief link show | grep -v "lo" | while read -r iface state mac; do
+                # Detect interface type by name pattern and /sys/class/net properties
+                iface_type="unknown"
+                if echo "$iface" | grep -qE '^(wlan|wlp)'; then
+                    iface_type="wifi"
+                elif echo "$iface" | grep -qE '^(eth|enp|eno|ens)'; then
+                    iface_type="ethernet"
+                elif [ -d "/sys/class/net/$iface/wireless" ]; then
+                    iface_type="wifi"
+                elif [ -f "/sys/class/net/$iface/type" ]; then
+                    # type 1 = ethernet, type 801 = wireless
+                    net_type=$(cat "/sys/class/net/$iface/type" 2>/dev/null || echo "0")
+                    if [ "$net_type" = "1" ]; then
+                        iface_type="ethernet"
+                    elif [ "$net_type" = "801" ]; then
+                        iface_type="wifi"
+                    fi
+                fi
+                printf "  %s (%s) %s\n" "$iface" "$iface_type" "$state"
+            done
         else
-            ls /sys/class/net/ 2>/dev/null || echo "Unable to list interfaces"
+            # Fallback to /sys/class/net with type detection
+            if [ -d /sys/class/net ]; then
+                for iface_path in /sys/class/net/*; do
+                    iface=$(basename "$iface_path")
+                    [ "$iface" = "lo" ] && continue
+
+                    iface_type="unknown"
+                    if [ -d "$iface_path/wireless" ]; then
+                        iface_type="wifi"
+                    elif echo "$iface" | grep -qE '^(wlan|wlp)'; then
+                        iface_type="wifi"
+                    elif echo "$iface" | grep -qE '^(eth|enp|eno|ens)'; then
+                        iface_type="ethernet"
+                    elif [ -f "$iface_path/type" ]; then
+                        net_type=$(cat "$iface_path/type" 2>/dev/null || echo "0")
+                        if [ "$net_type" = "1" ]; then
+                            iface_type="ethernet"
+                        elif [ "$net_type" = "801" ]; then
+                            iface_type="wifi"
+                        fi
+                    fi
+
+                    printf "  %s (%s)\n" "$iface" "$iface_type"
+                done
+            else
+                echo "Unable to list interfaces"
+            fi
         fi
         echo ""
 
@@ -192,15 +245,17 @@ install() {
         TIMEOUT=${input_timeout:-7}
 
         echo ""
-        echo "Internet Connectivity Monitoring (Optional):"
-        echo "  Enable this to monitor actual internet availability, not just link status."
-        echo "  The system will switch to WiFi if Ethernet has no internet access."
+        echo "Periodic Internet Connectivity Monitoring (Optional):"
+        echo "  Enable active monitoring of actual internet availability, not just link status."
+        echo "  The system will periodically check and switch to WiFi if Ethernet has no internet"
+        echo "  and to Ethernet if WiFi has no internet."
+        echo "  Uses minimal resources with timer-based checks (not continuous polling)."
         echo ""
-        printf "Enable internet monitoring? (y/N): "
+        printf "Enable periodic internet monitoring? (y/N): "
         read -r input_check_internet
         if [ "$input_check_internet" = "y" ] || [ "$input_check_internet" = "Y" ]; then
             CHECK_INTERNET=1
-            
+
             echo ""
             echo "Select connectivity check method:"
             echo "  1) Ping to gateway (recommended - most reliable and provider-safe)"
@@ -210,7 +265,7 @@ install() {
             printf "Enter choice [1]: "
             read -r input_check_method
             input_check_method=${input_check_method:-1}
-            
+
             case "$input_check_method" in
                 1)
                     CHECK_METHOD="gateway"
@@ -244,13 +299,13 @@ install() {
                     CHECK_TARGET=""
                     ;;
             esac
-            
+
             echo ""
-            printf "Enter check interval in seconds [30]: "
+            printf "Check interval in seconds [30]: "
             read -r input_check_interval
             CHECK_INTERVAL=${input_check_interval:-30}
-            echo "Check interval: ${CHECK_INTERVAL}s"
-            
+            echo "Enabled: Will check internet connectivity every ${CHECK_INTERVAL} seconds using $CHECK_METHOD"
+
             echo ""
             printf "Log every check attempt? (y/N) [logs only state changes by default]: "
             read -r input_log_checks
@@ -263,12 +318,13 @@ install() {
             fi
         else
             CHECK_INTERNET=0
-            CHECK_INTERVAL=30
+            CHECK_INTERVAL=0
             CHECK_METHOD="gateway"
             CHECK_TARGET=""
             LOG_CHECK_ATTEMPTS=0
+            echo "Disabled: Event-driven checks only (no periodic monitoring)"
         fi
-        
+
         echo ""
         echo "Multi-Interface Configuration (Optional):"
         echo "  Configure priority for multiple ethernet or wifi interfaces."
@@ -281,14 +337,52 @@ install() {
             if command -v nmcli > /dev/null 2>&1; then
                 nmcli device | grep -E "(ethernet|wifi)" | awk '{printf "  %s (%s)\n", $1, $2}'
             elif command -v ip > /dev/null 2>&1; then
-                ip -brief link show | grep -v "lo" | awk '{printf "  %s\n", $1}'
+                # Show with type detection for ip command
+                ip -brief link show | grep -v "lo" | while read -r iface state mac; do
+                    iface_type="unknown"
+                    if echo "$iface" | grep -qE '^(wlan|wlp)'; then
+                        iface_type="wifi"
+                    elif echo "$iface" | grep -qE '^(eth|enp|eno|ens)'; then
+                        iface_type="ethernet"
+                    elif [ -d "/sys/class/net/$iface/wireless" ]; then
+                        iface_type="wifi"
+                    elif [ -f "/sys/class/net/$iface/type" ]; then
+                        net_type=$(cat "/sys/class/net/$iface/type" 2>/dev/null || echo "0")
+                        if [ "$net_type" = "1" ]; then
+                            iface_type="ethernet"
+                        elif [ "$net_type" = "801" ]; then
+                            iface_type="wifi"
+                        fi
+                    fi
+                    printf "  %s (%s)\n" "$iface" "$iface_type"
+                done
+            else
+                # Fallback to /sys/class/net
+                if [ -d /sys/class/net ]; then
+                    for iface_path in /sys/class/net/*; do
+                        iface=$(basename "$iface_path")
+                        [ "$iface" = "lo" ] && continue
+
+                        iface_type="unknown"
+                        if [ -d "$iface_path/wireless" ]; then
+                            iface_type="wifi"
+                        elif echo "$iface" | grep -qE '^(wlan|wlp)'; then
+                            iface_type="wifi"
+                        elif echo "$iface" | grep -qE '^(eth|enp|eno|ens)'; then
+                            iface_type="ethernet"
+                        fi
+
+                        printf "  %s (%s)\n" "$iface" "$iface_type"
+                    done
+                fi
             fi
             echo ""
             echo "Enter interfaces in priority order (comma-separated, highest first):"
             echo "Example: eth0,eth1,wlan0"
-            printf "Interface priority: "
+            DEFAULT_PRIORITY="${ETH_DEV},${WIFI_DEV}"
+            printf "Interface priority [%s]: " "$DEFAULT_PRIORITY"
             read -r input_interface_priority
-            INTERFACE_PRIORITY="$input_interface_priority"
+            INTERFACE_PRIORITY="${input_interface_priority:-$DEFAULT_PRIORITY}"
             if [ -n "$INTERFACE_PRIORITY" ]; then
                 echo "Priority configured: $INTERFACE_PRIORITY"
             fi
@@ -335,6 +429,13 @@ install() {
 
     # Set up paths (matching macOS naming convention)
     WORK_UNINSTALL="$INSTALL_DIR/uninstall.sh"
+
+    # Extract backend libraries
+    mkdir -p "$INSTALL_DIR/lib"
+    echo "$BACKEND_NMCLI_B64" | base64 -d > "$INSTALL_DIR/lib/network-nmcli.sh"
+    echo "$BACKEND_IP_B64" | base64 -d > "$INSTALL_DIR/lib/network-ip.sh"
+    chmod +x "$INSTALL_DIR/lib/network-nmcli.sh"
+    chmod +x "$INSTALL_DIR/lib/network-ip.sh"
 
     # Extract switcher
     echo "$SWITCHER_B64" | base64 -d > "$INSTALL_DIR/eth-wifi-auto.sh"

@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-# Event-driven Ethernet/Wi-Fi switcher for Linux (NetworkManager)
-# Uses 'nmcli monitor' to wait for events, consuming 0% CPU while idle.
+# Event-driven Ethernet/Wi-Fi switcher for Linux
+# Supports NetworkManager (nmcli) and ip/rfkill fallbacks
 
 STATE_FILE="${STATE_FILE:-/tmp/eth-wifi-state}"
 TIMEOUT="${TIMEOUT:-7}"
@@ -14,9 +14,39 @@ LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
 INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
 LAST_CHECK_STATE_FILE="${STATE_FILE}.last_check"
 
+# Detect and load appropriate network backend
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_LOADED=0
+
+if command -v nmcli >/dev/null 2>&1; then
+    # NetworkManager backend
+    if [ -f "$SCRIPT_DIR/lib/network-nmcli.sh" ]; then
+        . "$SCRIPT_DIR/lib/network-nmcli.sh"
+        BACKEND_LOADED=1
+        BACKEND_NAME="nmcli"
+    fi
+fi
+
+if [ "$BACKEND_LOADED" = "0" ] && command -v ip >/dev/null 2>&1; then
+    # IP command fallback backend
+    if [ -f "$SCRIPT_DIR/lib/network-ip.sh" ]; then
+        . "$SCRIPT_DIR/lib/network-ip.sh"
+        BACKEND_LOADED=1
+        BACKEND_NAME="ip"
+    fi
+fi
+
+if [ "$BACKEND_LOADED" = "0" ]; then
+    echo "ERROR: No supported network tools found (nmcli or ip command)" >&2
+    echo "Please install NetworkManager (for nmcli) or iproute2 (for ip command)" >&2
+    exit 1
+fi
+
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
+
+log "Using backend: $BACKEND_NAME"
 
 read_last_state(){
   # If file doesn't exist or can't be read, treat as disconnected
@@ -37,17 +67,14 @@ get_eth_dev() {
         # Parse priority list and return first available ethernet interface
         for iface in $(echo "$INTERFACE_PRIORITY" | tr ',' ' '); do
             iface=$(echo "$iface" | xargs) # trim whitespace
-            if [ -n "$iface" ]; then
-                iface_type=$(nmcli device | grep "^$iface " | awk '{print $2}')
-                if [ "$iface_type" = "ethernet" ]; then
-                    echo "$iface"
-                    return 0
-                fi
+            if [ -n "$iface" ] && is_ethernet_iface "$iface"; then
+                echo "$iface"
+                return 0
             fi
         done
     fi
     # Default: get first ethernet interface
-    nmcli device | grep -E "ethernet" | awk '{print $1}' | head -n 1
+    get_first_ethernet_iface
 }
 
 get_wifi_dev() {
@@ -56,38 +83,23 @@ get_wifi_dev() {
         # Parse priority list and return first available wifi interface
         for iface in $(echo "$INTERFACE_PRIORITY" | tr ',' ' '); do
             iface=$(echo "$iface" | xargs) # trim whitespace
-            if [ -n "$iface" ]; then
-                iface_type=$(nmcli device | grep "^$iface " | awk '{print $2}')
-                if [ "$iface_type" = "wifi" ]; then
-                    echo "$iface"
-                    return 0
-                fi
+            if [ -n "$iface" ] && is_wifi_iface "$iface"; then
+                echo "$iface"
+                return 0
             fi
         done
     fi
     # Default: get first wifi interface
-    nmcli device | grep -E "wifi" | awk '{print $1}' | head -n 1
+    get_first_wifi_iface
 }
 
-get_all_eth_devs() {
-    # Get all ethernet devices
-    nmcli device | grep -E "ethernet" | awk '{print $1}'
-}
-
-get_all_wifi_devs() {
-    # Get all wifi devices
-    nmcli device | grep -E "wifi" | awk '{print $1}'
-}
-
-get_all_network_devs() {
-    # Get all ethernet and wifi devices, excluding loopback
-    nmcli device | grep -E "(ethernet|wifi)" | awk '{print $1}'
-}
+# Note: get_all_eth_devs, get_all_wifi_devs, get_all_network_devs
+# are provided by the backend (network-nmcli.sh or network-ip.sh)
 
 check_internet() {
     iface="$1"
     result=1
-    
+
     case "$CHECK_METHOD" in
         gateway)
             # Ping gateway - most reliable and safest method
@@ -111,7 +123,7 @@ check_internet() {
                 fi
             fi
             ;;
-        
+
         ping)
             # Ping domain/IP - requires CHECK_TARGET to be set
             if [ -z "$CHECK_TARGET" ]; then
@@ -129,7 +141,7 @@ check_internet() {
                 fi
             fi
             ;;
-        
+
         curl)
             # HTTP/HTTPS check using curl - may be blocked by providers
             if [ -z "$CHECK_TARGET" ]; then
@@ -141,7 +153,7 @@ check_internet() {
                 fi
             elif command -v wget >/dev/null 2>&1; then
                 # Get IP address for wget binding
-                iface_ip=$(nmcli -t -f IP4.ADDRESS device show "$iface" 2>/dev/null | cut -d: -f2 | cut -d/ -f1 | head -n 1)
+                iface_ip=$(get_iface_ip "$iface")
                 if [ -n "$iface_ip" ]; then
                     if wget --bind-address="$iface_ip" --timeout=10 --tries=1 -q -O /dev/null "$CHECK_TARGET" 2>/dev/null; then
                         result=0
@@ -156,20 +168,20 @@ check_internet() {
                 fi
             fi
             ;;
-        
+
         *)
             log "Unknown CHECK_METHOD: $CHECK_METHOD"
             return 1
             ;;
     esac
-    
+
     # Log state changes (always logged regardless of LOG_CHECK_ATTEMPTS)
     last_check_state=$(cat "$LAST_CHECK_STATE_FILE" 2>/dev/null || echo "unknown")
     current_check_state="success"
     if [ $result -ne 0 ]; then
         current_check_state="failed"
     fi
-    
+
     if [ "$last_check_state" != "$current_check_state" ]; then
         if [ "$current_check_state" = "success" ]; then
             log "Internet check: $iface is now reachable (recovered from failure)"
@@ -178,19 +190,19 @@ check_internet() {
         fi
         echo "$current_check_state" > "$LAST_CHECK_STATE_FILE"
     fi
-    
+
     return $result
 }
 
 eth_is_connecting() {
     eth_dev="$1"
-    eth_state=$(nmcli -t -f DEVICE,STATE device | grep "^$eth_dev:" | cut -d: -f2)
+    eth_state=$(get_iface_state "$eth_dev")
     [ "$eth_state" = "connecting" ] || [ "$eth_state" = "connected (externally)" ]
 }
 
 eth_is_connected() {
     eth_dev="$1"
-    eth_state=$(nmcli -t -f DEVICE,STATE device | grep "^$eth_dev:" | cut -d: -f2)
+    eth_state=$(get_iface_state "$eth_dev")
     [ "$eth_state" = "connected" ]
 }
 
@@ -222,6 +234,31 @@ eth_is_connected_with_retry() {
     return 1
 }
 
+ensure_wifi_on_and_wait() {
+    iface="$1"
+    # Check if wifi is disabled or not connected
+    if [ "$wifi_enabled" = "disabled" ] || [ "$(get_iface_state "$iface")" != "connected" ]; then
+        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+            log "  Enabling WiFi ($iface) to check for internet..."
+        fi
+        enable_wifi
+
+        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+           log "  Waiting for IP address on $iface..."
+        fi
+
+        wait_retries=0
+        max_wait_retries=15
+        while [ $wait_retries -lt $max_wait_retries ]; do
+             if [ "$(get_iface_state "$iface")" = "connected" ]; then
+                 break
+             fi
+             sleep 1
+             wait_retries=$((wait_retries + 1))
+        done
+    fi
+}
+
 check_and_switch() {
     eth_dev=$(get_eth_dev)
     wifi_dev=$(get_wifi_dev)
@@ -232,6 +269,223 @@ check_and_switch() {
 
     last_state=$(read_last_state)
 
+    # Determine current active interface (the one we're currently using)
+    active_iface=""
+
+    # Check ethernet first (higher priority)
+    if eth_is_connected "$eth_dev"; then
+        active_iface="$eth_dev"
+        active_type="ethernet"
+    elif is_wifi_enabled; then
+        # Check if wifi is connected
+        wifi_state=$(get_iface_state "$wifi_dev")
+        if [ "$wifi_state" = "connected" ]; then
+            active_iface="$wifi_dev"
+            active_type="wifi"
+        fi
+    fi
+
+    # If internet checking is enabled, validate the ACTIVE connection
+    if [ "$CHECK_INTERNET" = "1" ] && [ -n "$active_iface" ]; then
+        active_has_internet=0
+        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+            log "Checking internet on active interface: $active_iface ($active_type)"
+        fi
+
+        if check_internet "$active_iface"; then
+            active_has_internet=1
+            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                log "✓ Active interface $active_iface has internet"
+            fi
+        fi
+
+        # Always check higher priority interfaces (whether active has internet or not)
+        found_higher_priority=""
+        if [ -n "$INTERFACE_PRIORITY" ]; then
+            # Find position of active interface in priority list
+            active_position=0
+            position=0
+            for iface in $(echo "$INTERFACE_PRIORITY" | tr ',' ' '); do
+                position=$((position + 1))
+                iface=$(echo "$iface" | xargs)
+                if [ "$iface" = "$active_iface" ]; then
+                    active_position=$position
+                    break
+                fi
+            done
+
+            # Check all HIGHER priority interfaces
+            if [ $active_position -gt 1 ]; then
+                if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                    log "Checking higher priority interfaces for recovery..."
+                fi
+
+                position=0
+                for iface in $(echo "$INTERFACE_PRIORITY" | tr ',' ' '); do
+                    position=$((position + 1))
+                    iface=$(echo "$iface" | xargs)
+
+                    # Only check interfaces with higher priority (lower position number)
+                    if [ $position -ge $active_position ]; then
+                        break
+                    fi
+
+                    if [ -z "$iface" ]; then
+                        continue
+                    fi
+
+                    # Check if this is a WiFi interface and WiFi is disabled, enable it to check
+                    if is_wifi_iface "$iface" && ! is_wifi_enabled; then
+                        ensure_wifi_on_and_wait "$iface"
+                    fi
+
+                    # Check if interface is connected
+                    iface_state=$(get_iface_state "$iface")
+                    if [ "$iface_state" = "connected" ]; then
+                        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                            log "  Checking $iface..."
+                        fi
+                        if check_internet "$iface"; then
+                            log "✓ Higher priority interface $iface has internet, switching..."
+                            found_higher_priority="$iface"
+                            break
+                        else
+                            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                                log "  No internet on $iface"
+                            fi
+                        fi
+                    else
+                        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                            log "  Interface $iface is not connected (state: ${iface_state:-unknown})"
+                        fi
+                    fi
+                done
+            fi
+
+            # If higher priority interface found, switch to it
+            if [ -n "$found_higher_priority" ]; then
+                if is_ethernet_iface "$found_higher_priority"; then
+                    log "→ Switching to Ethernet ($found_higher_priority)"
+                    write_state "connected"
+                    disable_wifi
+                elif is_wifi_iface "$found_higher_priority"; then
+                    log "→ Switching to WiFi ($found_higher_priority)"
+                    write_state "disconnected"
+                    enable_wifi
+                fi
+                return
+            fi
+        fi
+
+        # If active interface has internet and no higher priority available, we're done
+        if [ $active_has_internet -eq 1 ]; then
+            # Ensure WiFi state matches the active interface type
+            if [ "$active_type" = "ethernet" ]; then
+                write_state "connected"
+                if wifi_is_on; then
+                    log "eth up with internet, turning wifi off"
+                    set_wifi off
+                fi
+            elif [ "$active_type" = "wifi" ]; then
+                write_state "disconnected"
+                # WiFi should be on (it is, since it's active)
+            fi
+            return
+        fi
+
+        # Active interface has NO internet and no higher priority works - try lower priority
+        log "⚠️  Active interface $active_iface has NO internet, searching for alternatives..."
+        found_working_iface=""
+
+        if [ -n "$INTERFACE_PRIORITY" ]; then
+            # Try all interfaces in priority order (will skip higher priority ones we already checked)
+            for iface in $(echo "$INTERFACE_PRIORITY" | tr ',' ' '); do
+                iface=$(echo "$iface" | xargs)
+                if [ -z "$iface" ] || [ "$iface" = "$active_iface" ]; then
+                    continue
+                fi
+
+                # Skip if this was the higher priority we already checked
+                if [ "$iface" = "$found_higher_priority" ]; then
+                    continue
+                fi
+
+                # Check if this is a WiFi interface and WiFi is disabled, enable it to check
+                if is_wifi_iface "$iface" && ! is_wifi_enabled; then
+                    ensure_wifi_on_and_wait "$iface"
+                fi
+
+                # Check if interface is connected
+                iface_state=$(get_iface_state "$iface")
+                if [ "$iface_state" = "connected" ]; then
+                    if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                        log "  Checking $iface..."
+                    fi
+                    if check_internet "$iface"; then
+                        log "✓ Found working internet on $iface"
+                        found_working_iface="$iface"
+                        break
+                    else
+                        log "  No internet on $iface"
+                    fi
+                else
+                    if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                        log "  Interface $iface is not connected (state: ${iface_state:-unknown})"
+                    fi
+                fi
+            done
+        else
+            # No priority list - try ethernet then wifi
+            if [ "$active_type" = "wifi" ] && eth_is_connected "$eth_dev"; then
+                if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                    log "  Checking $eth_dev (ethernet)..."
+                fi
+                if check_internet "$eth_dev"; then
+                    log "✓ Found working internet on $eth_dev"
+                    found_working_iface="$eth_dev"
+                fi
+            elif [ "$active_type" = "ethernet" ]; then
+                # Current ethernet has no internet, try wifi
+                if [ "$wifi_enabled" = "disabled" ]; then
+                    ensure_wifi_on_and_wait "$wifi_dev"
+                fi
+                wifi_state=$(get_iface_state "$wifi_dev")
+                if [ "$wifi_state" = "connected" ]; then
+                    if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                        log "  Checking $wifi_dev (wifi)..."
+                    fi
+                    if check_internet "$wifi_dev"; then
+                        log "✓ Found working internet on $wifi_dev"
+                        found_working_iface="$wifi_dev"
+                    fi
+                fi
+            fi
+        fi
+
+        # Switch to the working interface if found
+        if [ -n "$found_working_iface" ]; then
+            if is_ethernet_iface "$found_working_iface"; then
+                log "→ Switching to Ethernet ($found_working_iface)"
+                write_state "connected"
+                disable_wifi
+            elif is_wifi_iface "$found_working_iface"; then
+                log "→ Switching to WiFi ($found_working_iface)"
+                write_state "disconnected"
+                enable_wifi
+            fi
+            if [ -n "$INTERFACE_PRIORITY" ]; then
+                log "   Periodic checks will continue monitoring higher priority interfaces for recovery"
+            fi
+            return
+        else
+            log "⚠️  No interface with working internet found, keeping current: $active_iface"
+            log "   Will continue checking all interfaces every ${CHECK_INTERVAL}s until internet is restored"
+            # Keep current interface even without internet (better than nothing)
+            return
+        fi
+    fi
+
+    # Standard logic when not checking internet or internet is OK
     # Quick check without retry
     if eth_is_connected "$eth_dev"; then
         current_state="connected"
@@ -243,7 +497,6 @@ check_and_switch() {
     if [ "$last_state" = "connected" ] && [ "$current_state" = "disconnected" ]; then
         log "Ethernet disconnected, enabling Wi-Fi immediately"
         write_state "disconnected"
-        wifi_enabled=$(nmcli radio wifi)
         if [ "$wifi_enabled" = "disabled" ]; then
             nmcli radio wifi on
         fi
@@ -258,29 +511,18 @@ check_and_switch() {
         fi
     fi
 
-    # If internet checking is enabled, verify actual internet connectivity
-    if [ "$CHECK_INTERNET" = "1" ] && [ "$current_state" = "connected" ]; then
-        log "Checking internet connectivity on $eth_dev..."
-        if ! check_internet "$eth_dev"; then
-            log "No internet on $eth_dev, treating as disconnected"
-            current_state="disconnected"
-        fi
-    fi
-
     # Update state and manage wifi
     write_state "$current_state"
 
     if [ "$current_state" = "connected" ]; then
-        wifi_enabled=$(nmcli radio wifi)
-        if [ "$wifi_enabled" = "enabled" ]; then
+        if is_wifi_enabled; then
             log "Ethernet connected ($eth_dev). Disabling Wi-Fi..."
-            nmcli radio wifi off
+            disable_wifi
         fi
     else
-        wifi_enabled=$(nmcli radio wifi)
-        if [ "$wifi_enabled" = "disabled" ]; then
+        if ! is_wifi_enabled; then
             log "Ethernet disconnected ($eth_dev). Enabling Wi-Fi..."
-            nmcli radio wifi on
+            enable_wifi
         fi
     fi
 }
@@ -298,12 +540,18 @@ if [ "$CHECK_INTERNET" = "1" ]; then
     ) &
     CHECKER_PID=$!
     log "Started periodic internet checker (PID: $CHECKER_PID, interval: ${CHECK_INTERVAL}s)"
+    if [ -n "$INTERFACE_PRIORITY" ]; then
+        log "Priority-based monitoring: Will continuously check all interfaces for internet recovery"
+        log "Higher priority interfaces will be preferred when multiple have connectivity"
+    else
+        log "Will continuously monitor and switch between ethernet and wifi based on connectivity"
+    fi
 fi
 
 # Monitor events
 log "Starting event monitor..."
-nmcli monitor | while read -r line; do
-    if echo "$line" | grep -qE "(connected|disconnected|connectivity)"; then
+monitor_events | while read -r line; do
+    if echo "$line" | grep -qE "(connected|disconnected|connectivity|Connectivity)"; then
         check_and_switch
     fi
 done

@@ -20,11 +20,13 @@ Choose your platform and run the command in your terminal:
 ```bash
 curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-macos.sh | sudo bash
 ```
+> **Note:** `curl` is required and should be pre-installed on macOS. It's critical for multi-interface internet monitoring.
 
 ### Linux
 ```bash
 curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-linux.sh | sudo bash
 ```
+> **Note:** If `curl` is not installed: `sudo apt install curl` or `sudo yum install curl`
 
 ### Windows (PowerShell Admin)
 **Important:** Right-click PowerShell → "Run as administrator" before running this command.
@@ -32,6 +34,7 @@ curl -fsSL https://github.com/dst0/ethernet-wifi-switcher/releases/latest/downlo
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; curl -Uri https://github.com/dst0/ethernet-wifi-switcher/releases/latest/download/install-windows.ps1 -UseBasicParsing | iex
 ```
+> **Note:** All required tools are built into Windows - no additional dependencies needed.
 
 ---
 
@@ -205,17 +208,28 @@ During installation, you will be prompted whether to enable internet monitoring:
 Enable internet monitoring? (y/N): y
 
 Select connectivity check method:
-  1) Ping to gateway (recommended - most reliable and provider-safe)
-  2) Ping to domain/IP address
-  3) HTTP/HTTPS check (curl) - May be blocked by ISP/firewall
+  1) Gateway ping - Tests LOCAL connectivity to router (not actual internet)
+  2) Ping to domain/IP - Tests internet connectivity (may fail on non-active interfaces on macOS)
+  3) HTTP/HTTPS check (curl) - Tests actual internet (RECOMMENDED for macOS multi-interface)
 Enter choice [1]: 1
 Selected: Gateway ping (auto-detected per interface)
 
+Log every check attempt? (y/N) [logs only state changes by default]: N
+Default: Will log only state changes (failure/recovery)
+
+# Linux and Windows:
 Enter check interval in seconds [30]: 30
 Check interval: 30s
 
-Log every check attempt? (y/N) [logs only state changes by default]: N
-Default: Will log only state changes (failure/recovery)
+# macOS (additional prompt for periodic checking):
+Periodic Internet Check (Optional):
+  In addition to event-driven checks, enable periodic checks.
+  This helps detect internet failures that don't trigger network events.
+  Note: Uses minimal resources (timer-based, not polling).
+
+Enable periodic checks? (y/N): y
+Enter check interval in seconds [30]: 30
+Enabled: Will check every 30 seconds
 
 Multi-Interface Configuration (Optional):
   Configure priority for multiple ethernet or wifi interfaces.
@@ -226,7 +240,7 @@ Available interfaces:
   eth1 (ethernet)
   wlan0 (wifi)
 
-Enter interfaces in priority order (comma-separated, highest first):
+Enter interfaces in priority order (comma-separated, highest first) [eth0,wlan0]:
 Example: eth0,eth1,wlan0
 Interface priority: eth0,eth1,wlan0
 Priority configured: eth0,eth1,wlan0
@@ -234,14 +248,20 @@ Priority configured: eth0,eth1,wlan0
 
 For non-interactive/automated installations, set environment variables:
 ```bash
-# macOS/Linux - Gateway ping (recommended)
+# Linux - Gateway ping (tests local connectivity)
 CHECK_INTERNET=1 CHECK_METHOD=gateway CHECK_INTERVAL=30 sudo bash ./install-linux.sh
 
-# macOS/Linux - Ping to 8.8.8.8 with verbose logging
-CHECK_INTERNET=1 CHECK_METHOD=ping CHECK_TARGET=8.8.8.8 CHECK_INTERVAL=30 LOG_CHECK_ATTEMPTS=1 sudo bash ./install-linux.sh
+# Linux - Ping to 8.8.8.8 (tests actual internet)
+CHECK_INTERNET=1 CHECK_METHOD=ping CHECK_TARGET=8.8.8.8 CHECK_INTERVAL=30 sudo bash ./install-linux.sh
 
-# macOS/Linux - HTTP check with multi-interface priority
-CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_TARGET="http://captive.apple.com/hotspot-detect.html" CHECK_INTERVAL=30 INTERFACE_PRIORITY="eth0,eth1,wlan0" sudo bash ./install-linux.sh
+# macOS - Any method works (automatically uses curl for inactive interfaces)
+CHECK_INTERNET=1 CHECK_METHOD=ping CHECK_TARGET=8.8.8.8 CHECK_INTERVAL=30 INTERFACE_PRIORITY="en5,en0" sudo bash src/macos/install-template.sh
+
+# macOS - Curl method (tests actual internet on active interface too)
+CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_INTERVAL=30 INTERFACE_PRIORITY="en5,en0" sudo bash src/macos/install-template.sh
+
+# With verbose logging
+CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_INTERVAL=30 LOG_CHECK_ATTEMPTS=1 INTERFACE_PRIORITY="en5,en0" sudo bash src/macos/install-template.sh
 
 # Windows examples
 $env:CHECK_INTERNET=1; $env:CHECK_METHOD="gateway"; $env:CHECK_INTERVAL=30; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
@@ -286,15 +306,31 @@ Example configuration: `eth0,eth1,wlan0` means:
 The system will try interfaces in order until one with internet connectivity is found.
 
 **Platform-specific behavior:**
-- **Linux**: Periodic background checks every `CHECK_INTERVAL` seconds (default: 30s)
-- **macOS**: Checks triggered by network events only (no periodic polling for efficiency)
-- **Windows**: Periodic timer-based checks every `CHECK_INTERVAL` seconds (default: 30s)
+- **Linux**: Event-driven with optional periodic background checks every `CHECK_INTERVAL` seconds (default: 30s)
+- **macOS**: Event-driven with optional periodic timer-based checks every `CHECK_INTERVAL` seconds (default: 30s, disabled by default)
+  - **Automatic Method Selection**: When checking inactive/higher-priority interfaces, macOS automatically uses HTTP/curl regardless of CHECK_METHOD to avoid routing limitations. The configured CHECK_METHOD is used only for the currently active interface.
+- **Windows**: Event-driven with periodic timer-based checks every `CHECK_INTERVAL` seconds (default: 30s)
 
 **Recommended settings:**
-- **Check method:** Gateway ping (safest, works everywhere)
-- **Check interval:** 30-60 seconds (balance between responsiveness and overhead)
-- **Logging:** Default (state changes only) for normal operation, verbose for debugging
-- **Alternative targets:** For ping method: 8.8.8.8, 1.1.1.1, or your preferred DNS
+
+**Check method:**
+- `gateway` - Tests if interface can reach its router (LOCAL connectivity only, not actual internet)
+  - ✓ Fast, reliable, works everywhere
+  - ✗ Doesn't verify actual internet access (router could be offline)
+  - **Use case**: Basic connectivity monitoring
+
+- `curl` - Tests actual internet connectivity via HTTP/HTTPS
+  - ✓ Verifies real internet access
+  - ✓ Works reliably on all platforms
+  - ✗ May be blocked by some ISPs/firewalls
+  - **Use case**: When you need to verify actual internet (recommended)
+
+- `ping` - Tests internet by pinging a domain/IP (requires CHECK_TARGET)
+  - ✓ Verifies real internet access
+  - ✓ Works well on Linux/Windows
+  - **Use case**: When curl is not available
+
+**Note for macOS multi-interface setups**: The system automatically uses HTTP/curl for checking inactive interfaces regardless of your CHECK_METHOD, then switches to your configured method once an interface becomes active. This solves macOS routing limitations transparently.
 
 **Note:** This feature is **disabled by default** to maintain backward compatibility and minimize overhead for users who don't need it.
 
@@ -326,6 +362,89 @@ The project uses a modular build system to generate self-contained installers.
     ./build.sh
     ```
 3.  **Output**: The generated installers will be in the `dist/` directory.
+
+## Testing
+
+Comprehensive test suite with unit tests and integration tests.
+
+**Run all tests:**
+```bash
+./tests/run_all_tests.sh
+```
+
+**Run unit tests only:**
+```bash
+for test in tests/unit/test_*.sh; do sh "$test"; done
+```
+
+**Run integration tests (requires Docker):**
+```bash
+./tests/integration/test_linux_integration.sh
+```
+
+See [TESTING.md](TESTING.md) for detailed information about the test framework.
+
+## System Requirements & Dependencies
+
+### macOS
+**Required (built-in on all macOS systems):**
+- `networksetup` - Network configuration tool
+- `ipconfig` - IP configuration utility
+- `ifconfig` - Network interface configuration
+- `bash` or `sh` - Shell interpreter
+
+**Critical for multi-interface internet monitoring:**
+- `curl` - **Required** for checking internet on inactive interfaces (standard on macOS 10.3+)
+  - If missing, only the active interface can be tested for internet connectivity
+  - Install via: `brew install curl` (if somehow missing)
+
+**Optional (improves functionality):**
+- `ping` - For ping-based internet checks (standard on all systems)
+
+### Linux
+**Required:**
+- `bash` - Shell interpreter
+- `ip` or `ifconfig` - Network interface tools (usually pre-installed)
+- One of: `nmcli` (NetworkManager) or `connmanctl` (ConnMan) - Network management
+
+**For internet monitoring:**
+- `ping` - Internet connectivity checks (standard)
+- `curl` - For HTTP-based internet checks (install: `apt install curl` / `yum install curl`)
+
+**Optional backends:**
+- `nmcli` - NetworkManager CLI (recommended, most common)
+- `connmanctl` - ConnMan CLI (alternative)
+- Raw `ip` commands - Fallback if NetworkManager not available
+
+### Windows
+**Required (built-in on Windows 7+):**
+- PowerShell 5.1 or higher
+- `Get-NetAdapter` cmdlet (built-in)
+- `Set-NetAdapterBinding` cmdlet (built-in)
+- `Test-Connection` cmdlet (built-in)
+
+**All dependencies are built into Windows** - no additional software needed.
+
+### Verification
+To verify your system has required dependencies:
+
+**macOS/Linux:**
+```bash
+# Check curl availability (important for macOS multi-interface)
+command -v curl && echo "✓ curl available" || echo "✗ curl missing"
+
+# Check network tools
+command -v networksetup && echo "✓ networksetup available" || echo "✗ networksetup missing"  # macOS
+command -v nmcli && echo "✓ nmcli available" || echo "✗ nmcli missing"  # Linux
+```
+
+**Windows PowerShell:**
+```powershell
+Get-Command Test-Connection -ErrorAction SilentlyContinue
+Get-Command Get-NetAdapter -ErrorAction SilentlyContinue
+```
+
+**Note:** The installer will warn if critical dependencies are missing, especially curl on macOS when internet monitoring is enabled.
 
 ## Installation & Uninstallation
 

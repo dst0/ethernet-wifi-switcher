@@ -13,11 +13,16 @@ SYS_WATCHER_BIN="/usr/local/sbin/ethwifiauto-watch"
 SYS_PLIST_PATH="/Library/LaunchDaemons/${DAEMON_LABEL}.plist"
 
 DEFAULT_WORKDIR="${HOME}/.ethernet-wifi-auto-switcher"
-WORKDIR="${1:-}"
+# Don't use $1 as WORKDIR if it's --uninstall
+if [ "${1:-}" = "--uninstall" ]; then
+  WORKDIR=""
+else
+  WORKDIR="${1:-}"
+fi
 IS_TEST="${TEST_MODE:-0}"
 
-# If no workdir provided and interactive, ask user
-if [ -z "$WORKDIR" ] && [ -t 0 ]; then
+# If no workdir provided and interactive, ask user (but not during uninstall)
+if [ -z "$WORKDIR" ] && [ -t 0 ] && [ "${1:-}" != "--uninstall" ]; then
   printf "Enter installation directory [%s]: " "$DEFAULT_WORKDIR"
   read -r input_dir
   WORKDIR=${input_dir:-$DEFAULT_WORKDIR}
@@ -165,16 +170,17 @@ detect_interfaces() {
         TIMEOUT=${input_timeout:-7}
 
         echo ""
-        echo "Internet Connectivity Monitoring (Optional):"
-        echo "  Enable this to monitor actual internet availability, not just link status."
-        echo "  The system will switch to WiFi if Ethernet has no internet access."
-        echo "  Note: Checking is done when network events occur (no periodic polling on macOS)."
+        echo "Periodic Internet Connectivity Monitoring (Optional):"
+        echo "  Enable active monitoring of actual internet availability, not just link status."
+        echo "  The system will periodically check and switch to WiFi if Ethernet has no internet"
+        echo "  and to Ethernet if WiFi has no internet."
+        echo "  Uses minimal resources with timer-based checks (not continuous polling)."
         echo ""
-        printf "Enable internet monitoring? (y/N): "
+        printf "Enable periodic internet monitoring? (y/N): "
         read -r input_check_internet
         if [ "$input_check_internet" = "y" ] || [ "$input_check_internet" = "Y" ]; then
             CHECK_INTERNET=1
-            
+
             echo ""
             echo "Select connectivity check method:"
             echo "  1) Ping to gateway (recommended - most reliable and provider-safe)"
@@ -184,7 +190,7 @@ detect_interfaces() {
             printf "Enter choice [1]: "
             read -r input_check_method
             input_check_method=${input_check_method:-1}
-            
+
             case "$input_check_method" in
                 1)
                     CHECK_METHOD="gateway"
@@ -218,7 +224,13 @@ detect_interfaces() {
                     CHECK_TARGET=""
                     ;;
             esac
-            
+
+            echo ""
+            printf "Check interval in seconds [30]: "
+            read -r input_check_interval
+            CHECK_INTERVAL=${input_check_interval:-30}
+            echo "Enabled: Will check internet connectivity every ${CHECK_INTERVAL} seconds using $CHECK_METHOD"
+
             echo ""
             printf "Log every check attempt? (y/N) [logs only state changes by default]: "
             read -r input_log_checks
@@ -234,15 +246,53 @@ detect_interfaces() {
             CHECK_METHOD="gateway"
             CHECK_TARGET=""
             LOG_CHECK_ATTEMPTS=0
+            CHECK_INTERVAL=0
+            echo "Disabled: Event-driven checks only (no periodic monitoring)"
+        fi
+
+        echo ""
+        echo "Multi-Interface Configuration (Optional):"
+        echo "  Configure priority for multiple ethernet or wifi interfaces."
+        echo ""
+        printf "Configure interface priority? (y/N): "
+        read -r input_config_priority
+        if [ "$input_config_priority" = "y" ] || [ "$input_config_priority" = "Y" ]; then
+            echo ""
+            echo "Available interfaces:"
+            networksetup -listallhardwareports | awk '
+                /Hardware Port:/ {
+                    port = $0
+                    sub(/^Hardware Port: /, "", port)
+                    getline
+                    if ($1 == "Device:") {
+                        device = $2
+                        print "  " device " (" port ")"
+                    }
+                }
+            '
+            echo ""
+            echo "Enter interfaces in priority order (comma-separated, highest first):"
+            echo "Example: en5,en6,en0"
+            DEFAULT_PRIORITY="${ETH_DEV},${WIFI_DEV}"
+            printf "Interface priority [%s]: " "$DEFAULT_PRIORITY"
+            read -r input_interface_priority
+            INTERFACE_PRIORITY="${input_interface_priority:-$DEFAULT_PRIORITY}"
+            if [ -n "$INTERFACE_PRIORITY" ]; then
+                echo "Priority configured: $INTERFACE_PRIORITY"
+            fi
+        else
+            INTERFACE_PRIORITY=""
         fi
     else
         WIFI_DEV="$AUTO_WIFI"
         ETH_DEV="$AUTO_ETH"
         TIMEOUT="${TIMEOUT:-7}"
         CHECK_INTERNET="${CHECK_INTERNET:-0}"
+        CHECK_INTERVAL="${CHECK_INTERVAL:-0}"
         CHECK_METHOD="${CHECK_METHOD:-gateway}"
         CHECK_TARGET="${CHECK_TARGET:-}"
         LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
+        INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
     fi
 
     echo ""
@@ -257,6 +307,18 @@ detect_interfaces() {
             echo "  Check Target:     $CHECK_TARGET"
         fi
         echo "  Log All Checks:   $LOG_CHECK_ATTEMPTS"
+
+        # Verify curl is available (required for multi-interface checking on macOS)
+        if ! command -v curl >/dev/null 2>&1; then
+            echo ""
+            echo "⚠️  WARNING: curl is not installed but required for checking inactive interfaces"
+            echo "   on macOS. Install curl or internet checking will only work for the active"
+            echo "   interface. Curl is standard on macOS, this is unexpected."
+            echo ""
+        fi
+    fi
+    if [ -n "$INTERFACE_PRIORITY" ]; then
+        echo "  Interface Priority: $INTERFACE_PRIORITY"
     fi
 
     if [ -z "$WIFI_DEV" ] || [ -z "$ETH_DEV" ]; then
@@ -393,8 +455,9 @@ main(){
   sed -i '' "s|TIMEOUT=\"\${TIMEOUT:-7}\"|TIMEOUT=\"$TIMEOUT\"|g" "$WORK_HELPER"
   sed -i '' "s|CHECK_INTERNET=\"\${CHECK_INTERNET:-0}\"|CHECK_INTERNET=\"$CHECK_INTERNET\"|g" "$WORK_HELPER"
   sed -i '' "s|CHECK_METHOD=\"\${CHECK_METHOD:-gateway}\"|CHECK_METHOD=\"$CHECK_METHOD\"|g" "$WORK_HELPER"
-  sed -i '' "s|CHECK_TARGET=\"\${CHECK_TARGET:-}\"|CHECK_TARGET=\"$CHECK_TARGET\"|g" "$WORK_HELPER"
+  sed -i '' "s|CHECK_TARGET=\"\${CHECK_TARGET:-}\"| CHECK_TARGET=\"$CHECK_TARGET\"|g" "$WORK_HELPER"
   sed -i '' "s|LOG_CHECK_ATTEMPTS=\"\${LOG_CHECK_ATTEMPTS:-0}\"|LOG_CHECK_ATTEMPTS=\"$LOG_CHECK_ATTEMPTS\"|g" "$WORK_HELPER"
+  sed -i '' "s|INTERFACE_PRIORITY=\"\${INTERFACE_PRIORITY:-}\"|INTERFACE_PRIORITY=\"$INTERFACE_PRIORITY\"|g" "$WORK_HELPER"
   chmod +x "$WORK_HELPER"
 
   echo "Extracting watcher binary..."
@@ -419,6 +482,7 @@ main(){
   sed -i '' "s|\$WATCH_ERR|$WATCH_ERR|g" "$WORK_PLIST"
   sed -i '' "s|\$WIFI_DEV|$WIFI_DEV|g" "$WORK_PLIST"
   sed -i '' "s|\$ETH_DEV|$ETH_DEV|g" "$WORK_PLIST"
+  sed -i '' "s|\$CHECK_INTERVAL|$CHECK_INTERVAL|g" "$WORK_PLIST"
   sed -i '' "s|\$WORKDIR|$WORKDIR|g" "$WORK_PLIST"
 
   cp -f "$WORK_PLIST" "$SYS_PLIST_PATH"
@@ -457,6 +521,10 @@ uninstall() {
   fi
   ensure_root
   echo "Uninstalling..."
+  # Try to detect WORKDIR from installed uninstaller if not set
+  if [ -z "$WORKDIR" ] && [ -f "$DEFAULT_WORKDIR/uninstall.sh" ]; then
+    WORKDIR="$DEFAULT_WORKDIR"
+  fi
   # We need to extract the uninstaller script to run it
   # or we can just embed the logic here.
   # Since we already have UNINSTALL_CONTENT_B64, let's use it.
