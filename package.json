@@ -4,7 +4,7 @@
   "description": "Automatic Ethernet/Wi-Fi switcher with TypeScript core engine",
   "main": "dist/ts/index.js",
   "bin": {
-    "eth-wifi-switcher": "./dist/ts/cli.js"
+    "eth-wifi-switcher": "./dist/ts/cli/cli.js"
   },
   "scripts": {
     "build": "tsc",
