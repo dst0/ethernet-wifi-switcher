@@ -144,7 +144,7 @@ async function loadState(stateFile: string): Promise<State> {
   try {
     const content = await fs.readFile(stateFile, 'utf-8');
     return JSON.parse(content) as State;
-  } catch (error) {
+  } catch {
     // State file doesn't exist or is invalid - return initial state
     return createInitialState();
   }
@@ -154,7 +154,7 @@ async function saveState(stateFile: string, state: State): Promise<void> {
   const dir = path.dirname(stateFile);
   try {
     await fs.mkdir(dir, { recursive: true });
-  } catch (error) {
+  } catch {
     // Directory might already exist
   }
   await fs.writeFile(stateFile, JSON.stringify(state, null, 2), 'utf-8');

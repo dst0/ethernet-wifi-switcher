@@ -14,7 +14,7 @@ describe('CLI', () => {
     // Clean up test directory
     try {
       await fs.rm(testDir, { recursive: true });
-    } catch (error) {
+    } catch {
       // Directory might not exist
     }
     await fs.mkdir(testDir, { recursive: true });
@@ -24,7 +24,7 @@ describe('CLI', () => {
     // Clean up
     try {
       await fs.rm(testDir, { recursive: true });
-    } catch (error) {
+    } catch {
       // Ignore cleanup errors
     }
   });
