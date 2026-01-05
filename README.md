@@ -710,3 +710,50 @@ This micro-app is designed with extreme efficiency in mind:
 ## License
 
 This project is licensed under a Proprietary Non-Commercial License. Commercial usage, usage within business units, and redistribution of the software are strictly prohibited without a written agreement with the owner (dst0). You are welcome to share links to this repository or the installation instructions. See the [LICENSE](LICENSE) file for full details.
+
+## TypeScript Core Architecture
+
+The ethernet-wifi-switcher now uses a **hybrid architecture** with a TypeScript core engine for decision-making and thin shell wrappers for platform operations.
+
+### Why TypeScript?
+
+- **Testability**: Pure decision functions with zero side effects
+- **Reliability**: Strong typing prevents runtime errors
+- **Maintainability**: Clear separation between fact collection and decision logic
+- **Determinism**: Same inputs → same outputs, every time
+
+### Architecture
+
+```
+Platform (Shell) → Collect Facts → TypeScript Core → Decide Actions → Platform (Shell) → Apply Actions
+```
+
+**See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.**
+
+### Building with TypeScript
+
+```bash
+# Install dependencies
+npm install
+
+# Build TypeScript core
+npm run build
+
+# Build all platforms (includes TypeScript)
+./build.sh
+
+# Run TypeScript tests
+npm test
+
+# Lint TypeScript code
+npm run lint
+```
+
+### TypeScript Test Coverage
+
+- **Core engine**: 15 tests (decision logic, state management, timeouts)
+- **CLI**: 13 tests (I/O, formatting, env var parsing)
+- **Total**: 28 tests, all passing
+
+Run with: `npm test`
+
