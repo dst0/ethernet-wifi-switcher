@@ -1,130 +1,351 @@
 #!/bin/sh
-# macOS-specific DHCP IP acquisition and retry tests
-# Tests IP acquisition with retry logic and timeout handling
-# Note: Not using set -e to allow testing failure cases
+# Real unit tests for macOS IP acquisition retry functionality
+# Tests actual eth_is_up_with_retry logic from src/macos/switcher.sh
 
-# Load test framework
-. "$(dirname "$0")/../lib/assert.sh"
+set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+. "$SCRIPT_DIR/../lib/assert.sh"
+. "$SCRIPT_DIR/../lib/mock.sh"
+
+# Setup test environment
 setup() {
-    :
+    MOCK_DIR="/tmp/macos-ip-retry-test-$$"
+    mkdir -p "$MOCK_DIR/bin" "$MOCK_DIR/state"
+    export PATH="$MOCK_DIR/bin:$PATH"
+
+    export WIFI_DEV="en0"
+    export ETH_DEV="en5"
+    export STATE_DIR="$MOCK_DIR/state"
+    export STATE_FILE="$STATE_DIR/eth-wifi-state"
+    export LAST_CHECK_STATE_FILE="$STATE_FILE.last_check"
+    export TIMEOUT="2"
+    export CHECK_INTERNET="1"
+    export LOG_ALL_CHECKS="0"
+    export INTERFACE_PRIORITY=""
+    export CHECK_INTERVAL="30"
+    export CHECK_METHOD="gateway"
+    export CHECK_TARGET=""
+
+    # IP acquisition retry settings
+    export ETH_CONNECT_TIMEOUT="5"
+    export ETH_CONNECT_RETRIES="3"
+    export ETH_RETRY_INTERVAL="1"
+
+    export NETWORKSETUP="$MOCK_DIR/bin/networksetup"
+    export DATE="date"
+    export IPCONFIG="$MOCK_DIR/bin/ipconfig"
+    export IFCONFIG="$MOCK_DIR/bin/ifconfig"
+
+    rm -f "$STATE_FILE" "$LAST_CHECK_STATE_FILE" 2>/dev/null || true
 }
 
-# macOS IP acquisition function
-acquire_ip_macos() {
-    iface="$1"
-    timeout="${2:-30}"
+source_switcher() {
+    . "$PROJECT_ROOT/src/macos/switcher.sh"
+}
 
-    # On macOS, use ipconfig to renew DHCP
-    # ipconfig set "$iface" DHCP
+cleanup() {
+    rm -rf "$MOCK_DIR"
+}
 
-    # Check if IP is acquired
-    ip=$(ipconfig getifaddr "$iface" 2>/dev/null || echo "")
+# ============================================================================
+# Test: eth_is_up basic behavior
+# ============================================================================
 
-    if [ -z "$ip" ]; then
-        return 1
+test_eth_is_up_with_ip() {
+    test_start "eth_is_up_with_ip"
+    setup
+
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+echo "192.168.1.100"
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    source_switcher
+
+    if eth_is_up; then
+        result="up"
+    else
+        result="down"
     fi
-    return 0
+
+    assert_equals "up" "$result" "eth_is_up should return true with valid IP"
+    cleanup
 }
 
-# Test: Immediate IP acquisition
-test_immediate_ip_acquisition() {
-    test_start "immediate_ip_acquisition"
+test_eth_is_up_without_ip() {
+    test_start "eth_is_up_without_ip"
     setup
 
-    iface="en5"
-    timeout="30"
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+echo ""
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
 
-    # Simulate: interface already has IP
-    ip_acquired="yes"
+    source_switcher
 
-    assert_equals "yes" "$ip_acquired" "IP should be acquired immediately"
+    if eth_is_up; then
+        result="up"
+    else
+        result="down"
+    fi
+
+    assert_equals "down" "$result" "eth_is_up should return false without IP"
+    cleanup
 }
 
-# Test: Delayed IP acquisition with retry
-test_delayed_ip_acquisition() {
-    test_start "delayed_ip_acquisition"
+test_eth_is_up_with_link_local() {
+    test_start "eth_is_up_with_link_local"
     setup
 
-    iface="en5"
-    timeout="30"
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+echo "169.254.100.50"
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
 
-    # Simulate: IP not available initially, but available on retry
-    retry_count="0"
-    max_retries="5"
+    source_switcher
 
-    # First attempt: no IP
-    # Second attempt: IP acquired
-    ip_acquired_after_retry="yes"
+    if eth_is_up; then
+        result="up"
+    else
+        result="down"
+    fi
 
-    assert_equals "yes" "$ip_acquired_after_retry" "IP should be acquired after retry"
+    # Link-local IPs should be considered "up" for the purpose of this check
+    # but they indicate no DHCP - the real check is in internet connectivity
+    assert_equals "up" "$result" "eth_is_up should return true with link-local IP (DHCP may fail later)"
+    cleanup
 }
 
-# Test: IP acquisition timeout
-test_ip_acquisition_timeout() {
-    test_start "ip_acquisition_timeout"
+# ============================================================================
+# Test: eth_is_up_with_retry behavior
+# ============================================================================
+
+test_eth_is_up_with_retry_immediate_success() {
+    test_start "eth_is_up_with_retry_immediate_success"
+    setup
+    export ETH_CONNECT_RETRIES="3"
+    export ETH_RETRY_INTERVAL="0"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+echo "192.168.1.100"
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    source_switcher
+
+    if eth_is_up_with_retry; then
+        result="up"
+    else
+        result="down"
+    fi
+
+    assert_equals "up" "$result" "eth_is_up_with_retry should succeed immediately if IP available"
+    cleanup
+}
+
+test_eth_is_up_with_retry_eventual_success() {
+    test_start "eth_is_up_with_retry_eventual_success"
+    setup
+    export TIMEOUT="5"
+
+    # Create counter file for mock
+    echo "0" > "$MOCK_DIR/counter"
+
+    # Use EOF without quotes to allow variable expansion
+    cat > "$MOCK_DIR/bin/ipconfig" << EOF
+#!/bin/sh
+COUNTER_FILE="$MOCK_DIR/counter"
+count=\$(cat "\$COUNTER_FILE")
+count=\$((count + 1))
+echo "\$count" > "\$COUNTER_FILE"
+# Fail first 2 calls, succeed on 3rd
+if [ "\$count" -lt 3 ]; then
+    echo ""
+else
+    echo "192.168.1.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    source_switcher
+
+    if eth_is_up_with_retry; then
+        result="up"
+    else
+        result="down"
+    fi
+
+    assert_equals "up" "$result" "eth_is_up_with_retry should succeed after retries"
+    cleanup
+}
+
+test_eth_is_up_with_retry_all_fail() {
+    test_start "eth_is_up_with_retry_all_fail"
+    setup
+    export ETH_CONNECT_RETRIES="2"
+    export ETH_RETRY_INTERVAL="0"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+echo ""
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    source_switcher
+
+    if eth_is_up_with_retry; then
+        result="up"
+    else
+        result="down"
+    fi
+
+    assert_equals "down" "$result" "eth_is_up_with_retry should fail if all retries fail"
+    cleanup
+}
+
+# ============================================================================
+# Test: Retry configuration
+# ============================================================================
+
+test_retry_uses_configured_retries() {
+    test_start "retry_uses_configured_retries"
+    setup
+    export TIMEOUT="6"
+
+    echo "0" > "$MOCK_DIR/counter"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << EOF
+#!/bin/sh
+COUNTER_FILE="$MOCK_DIR/counter"
+count=\$(cat "\$COUNTER_FILE")
+count=\$((count + 1))
+echo "\$count" > "\$COUNTER_FILE"
+# Fail first 4 calls, succeed on 5th
+if [ "\$count" -lt 5 ]; then
+    echo ""
+else
+    echo "192.168.1.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    source_switcher
+
+    if eth_is_up_with_retry; then
+        result="up"
+    else
+        result="down"
+    fi
+
+    assert_equals "up" "$result" "Should succeed on 5th retry with TIMEOUT=6"
+    cleanup
+}
+
+test_zero_retries_single_check() {
+    test_start "zero_retries_single_check"
+    setup
+    export TIMEOUT="0"
+
+    echo "0" > "$MOCK_DIR/counter"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << EOF
+#!/bin/sh
+COUNTER_FILE="$MOCK_DIR/counter"
+count=\$(cat "\$COUNTER_FILE")
+count=\$((count + 1))
+echo "\$count" > "\$COUNTER_FILE"
+echo ""
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    source_switcher
+
+    eth_is_up_with_retry 2>/dev/null || true
+
+    # Read final count
+    final_count=$(cat "$MOCK_DIR/counter")
+
+    # With TIMEOUT=0, should only check once
+    assert_equals "1" "$final_count" "With TIMEOUT=0, should only check once"
+    cleanup
+}
+
+# ============================================================================
+# Test: eth_has_link (prerequisite for retry logic)
+# ============================================================================
+
+test_eth_has_link_active() {
+    test_start "eth_has_link_active"
     setup
 
-    iface="en5"
-    timeout="5"
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+echo "en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>"
+echo "	status: active"
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
 
-    # Simulate: timeout exceeded, no IP acquired
-    ip_acquired="no"
-    timeout_reached="yes"
+    source_switcher
 
-    assert_equals "no" "$ip_acquired" "No IP when timeout reached"
+    if eth_has_link; then
+        result="active"
+    else
+        result="inactive"
+    fi
+
+    assert_equals "active" "$result" "eth_has_link should return true when active"
+    cleanup
 }
 
-# Test: Interface must be active before IP acquisition
-test_interface_inactive_before_ip() {
-    test_start "interface_inactive_before_ip"
+test_eth_has_link_inactive() {
+    test_start "eth_has_link_inactive"
     setup
 
-    iface="en5"
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+echo "en5: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST>"
+echo "	status: inactive"
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
 
-    # Simulate: interface needs activation first
-    interface_active="no"
-    action_needed="activate_interface"
+    source_switcher
 
-    assert_equals "activate_interface" "$action_needed" "Should activate interface first"
+    if eth_has_link; then
+        result="active"
+    else
+        result="inactive"
+    fi
+
+    assert_equals "inactive" "$result" "eth_has_link should return false when inactive"
+    cleanup
 }
 
-# Test: Configurable timeout value
-test_configurable_timeout() {
-    test_start "configurable_timeout"
-    setup
-
-    iface="en5"
-    timeout="60"
-
-    # Timeout should be respected
-    assert_equals "60" "$timeout" "Should use configured timeout"
-}
-
-# Test: Multiple interface retries
-test_multiple_interface_retries() {
-    test_start "multiple_interface_retries"
-    setup
-
-    export INTERFACE_PRIORITY="en5,en8,en0"
-
-    # Try first interface
-    en5_ip="no"
-
-    # Try second interface
-    en8_ip="yes"
-
-    assert_equals "no" "$en5_ip" "First interface should have no IP"
-    assert_equals "yes" "$en8_ip" "Second interface should acquire IP"
-}
-
+# ============================================================================
 # Run all tests
-test_immediate_ip_acquisition
-test_delayed_ip_acquisition
-test_ip_acquisition_timeout
-test_interface_inactive_before_ip
-test_configurable_timeout
-test_multiple_interface_retries
+# ============================================================================
 
-# Print summary
+echo "============================================"
+echo "macOS IP Acquisition Retry Real Unit Tests"
+echo "============================================"
+echo "Testing ACTUAL retry logic from src/macos/switcher.sh"
+echo ""
+
+test_eth_is_up_with_ip
+test_eth_is_up_without_ip
+test_eth_is_up_with_link_local
+test_eth_is_up_with_retry_immediate_success
+test_eth_is_up_with_retry_eventual_success
+test_eth_is_up_with_retry_all_fail
+test_retry_uses_configured_retries
+test_zero_retries_single_check
+test_eth_has_link_active
+test_eth_has_link_inactive
+
 test_summary

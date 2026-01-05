@@ -36,7 +36,7 @@ test_internet_check_logging() {
     test_start "internet_check_logging"
 
     content=$(cat "$LINUX_SWITCHER")
-    assert_contains "$content" "LOG_CHECK_ATTEMPTS" "Should have LOG_CHECK_ATTEMPTS variable"
+    assert_contains "$content" "LOG_ALL_CHECKS" "Should have LOG_ALL_CHECKS variable"
     assert_contains "$content" "Internet check:" "Should log internet check attempts"
 }
 

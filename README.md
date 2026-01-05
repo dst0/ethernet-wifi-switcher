@@ -247,19 +247,18 @@ Enable periodic checks? (y/N): y
 Enter check interval in seconds [30]: 30
 Enabled: Will check every 30 seconds
 
-Multi-Interface Configuration (Optional):
-  Configure priority for multiple ethernet or wifi interfaces.
+# All platforms now use unified interface order configuration:
+Interface Order Configuration:
+  Specify which network interfaces to use and their priority.
+  Interfaces are listed in order of preference (comma-separated).
+  The switcher will use the first available interface of each type.
 
-Configure interface priority? (y/N): y
-Available interfaces:
-  eth0 (ethernet)
-  eth1 (ethernet)
-  wlan0 (wifi)
+  Examples:
+    eth0,wlan0              - Prefer ethernet, fallback to WiFi
+    eth0,eth1,wlan0         - Use specific interfaces in order
+    en5,en6,en0             - macOS with multiple adapters
 
-Enter interfaces in priority order (comma-separated, highest first) [eth0,wlan0]:
-Example: eth0,eth1,wlan0
-Interface priority: eth0,eth1,wlan0
-Priority configured: eth0,eth1,wlan0
+Enter interface priority order [eth0,wlan0]: eth0,eth1,wlan0
 ```
 
 For non-interactive/automated installations, set environment variables:
@@ -276,8 +275,9 @@ AUTO_INSTALL_DEPS=1 sudo bash ./install-linux.sh
 # Linux - Full automation with dependency install
 AUTO_INSTALL_DEPS=1 CHECK_INTERNET=1 CHECK_METHOD=gateway CHECK_INTERVAL=30 sudo bash ./install-linux.sh
 
-# macOS - Any method works (automatically uses curl for inactive interfaces)
+# macOS - Specify interface priority order (unified across all platforms)
 CHECK_INTERNET=1 CHECK_METHOD=ping CHECK_TARGET=8.8.8.8 CHECK_INTERVAL=30 INTERFACE_PRIORITY="en5,en0" sudo bash src/macos/install-template.sh
+```
 
 # macOS - Auto-install (requires Xcode CLI tools pre-installed)
 AUTO_INSTALL_DEPS=1 CHECK_INTERNET=1 CHECK_METHOD=gateway sudo bash src/macos/install-template.sh
@@ -286,7 +286,7 @@ AUTO_INSTALL_DEPS=1 CHECK_INTERNET=1 CHECK_METHOD=gateway sudo bash src/macos/in
 CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_INTERVAL=30 INTERFACE_PRIORITY="en5,en0" sudo bash src/macos/install-template.sh
 
 # With verbose logging
-CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_INTERVAL=30 LOG_CHECK_ATTEMPTS=1 INTERFACE_PRIORITY="en5,en0" sudo bash src/macos/install-template.sh
+CHECK_INTERNET=1 CHECK_METHOD=curl CHECK_INTERVAL=30 LOG_ALL_CHECKS=1 INTERFACE_PRIORITY="en5,en0" sudo bash src/macos/install-template.sh
 
 # Windows examples
 $env:CHECK_INTERNET=1; $env:CHECK_METHOD="gateway"; $env:CHECK_INTERVAL=30; powershell.exe -ExecutionPolicy Bypass -File ".\install-windows.ps1"
@@ -310,9 +310,9 @@ By default, internet connectivity checks only log state changes:
 - When internet becomes unreachable (was working before)
 - When internet recovers (working again after failure)
 
-Enable verbose logging (`LOG_CHECK_ATTEMPTS=1`) to log every single check attempt:
+Enable verbose logging (`LOG_ALL_CHECKS=1`) to log every single check attempt:
 ```bash
-LOG_CHECK_ATTEMPTS=1 sudo bash ./install-linux.sh
+LOG_ALL_CHECKS=1 sudo bash ./install-linux.sh
 ```
 
 This is useful for debugging but creates more log entries. Example logs:
@@ -328,19 +328,49 @@ With verbose logging enabled:
 [2026-01-03 18:01:00] Internet check: gateway ping to 192.168.1.1 via eth0 succeeded
 ```
 
-**Multi-interface support:**
+**Interface Priority Configuration:**
 
-Configure multiple ethernet or wifi interfaces with priority ordering during installation:
-- Interactive prompt shows available interfaces
-- Specify priority order (comma-separated, highest priority first)
-- System tries interfaces in order until one with connectivity is found
+The installer now uses a unified interface order configuration across all platforms (macOS, Linux, Windows). During installation, you'll be prompted to specify your network interfaces in order of preference:
+
+```
+Interface Order Configuration:
+  Specify which network interfaces to use and their priority.
+  Interfaces are listed in order of preference (comma-separated).
+  The switcher will use the first available interface of each type.
+
+Enter interface priority order [eth0,wlan0]: eth0,eth1,wlan0
+```
+
+**How it works:**
+- The system automatically detects your Ethernet and Wi-Fi interfaces and suggests a default order
+- You can accept the default or specify a custom order
+- Interfaces are tried in the order you specify
+- The first Ethernet-like interface becomes your primary Ethernet
+- The first Wi-Fi interface in the list becomes your primary Wi-Fi
+
+**Examples:**
+- `eth0,wlan0` — Standard: prefer ethernet, fallback to WiFi
+- `eth0,eth1,wlan0` — Multiple ethernet adapters with WiFi fallback
+- `en5,en0` — macOS with USB adapter (en5) preferred over built-in (en0)
+- `Ethernet,Ethernet 2,Wi-Fi` — Windows with multiple adapters
+
+**Environment variable (non-interactive):**
+```bash
+# Set interface priority directly
+INTERFACE_PRIORITY="eth0,eth1,wlan0" sudo bash ./install-linux.sh
+```
+
+**Internet monitoring with multiple interfaces:**
+
+When internet monitoring is enabled (`CHECK_INTERNET=1`), the system will:
+1. Monitor the active interface for internet connectivity
+2. If the active interface loses internet, switch to the next available interface in your priority list
+3. Periodically check if higher-priority interfaces have regained connectivity
 
 Example configuration: `eth0,eth1,wlan0` means:
 1. Try eth0 first
 2. If eth0 unavailable/no internet, try eth1
 3. If eth1 unavailable/no internet, fall back to wlan0
-
-The system will try interfaces in order until one with internet connectivity is found.
 
 **Platform-specific behavior:**
 - **Linux**: Event-driven with optional periodic background checks every `CHECK_INTERVAL` seconds (default: 30s)

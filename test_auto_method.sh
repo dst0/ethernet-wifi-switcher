@@ -12,7 +12,7 @@ IPCONFIG="echo"
 CHECK_METHOD="ping"
 CHECK_TARGET="8.8.8.8"
 CHECK_INTERNET="1"
-LOG_CHECK_ATTEMPTS="1"
+LOG_ALL_CHECKS="1"
 LAST_CHECK_STATE_FILE="/tmp/test_check_state"
 
 log() { echo "[TEST] $*"; }

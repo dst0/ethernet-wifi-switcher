@@ -20,11 +20,9 @@ cd "$(dirname "$0")/../.."
 TEST_WORKDIR="/tmp/eth-wifi-auto-test-$$"
 
 echo "1. Testing installation to test directory..."
-export ETHERNET_INTERFACE=en0
-export WIFI_INTERFACE=en1
 export CHECK_INTERNET=1
 export CHECK_METHOD=gateway
-export INTERFACE_PRIORITY="en0,en1"
+export INTERFACE_PRIORITY="en5,en0"
 
 # Install to test directory
 sudo bash dist/install-macos.sh "$TEST_WORKDIR" <<EOF

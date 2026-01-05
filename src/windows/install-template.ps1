@@ -120,20 +120,58 @@ function Install {
     $autoEth = if ($ethWithIP) { $ethWithIP.Name } else { "Not detected" }
     $autoWifi = if ($wifiAdapter) { $wifiAdapter.Name } else { "Not detected" }
 
-    if ($envEth) { $autoEth = $envEth }
-    if ($envWifi) { $autoWifi = $envWifi }
-
     Write-Host "  Ethernet: $autoEth"
     Write-Host "  Wi-Fi:    $autoWifi"
     Write-Host ""
 
     if ([Environment]::UserInteractive -and -not $USE_DEFAULTS -and ($autoEth -ne "Not detected" -or $autoWifi -ne "Not detected")) {
-        Write-Host "Press Enter to use auto-detected values, or type interface names to override:"
-        $ethInput = Read-Host "Ethernet interface [$autoEth]"
-        if (-not $ethInput) { $ethInput = $autoEth }
+        Write-Host "Interface Order Configuration:"
+        Write-Host "  Specify which network interfaces to use and their priority."
+        Write-Host "  Interfaces are listed in order of preference (comma-separated)."
+        Write-Host "  The switcher will use the first available interface of each type."
+        Write-Host ""
+        Write-Host "  Examples:"
+        Write-Host "    $autoEth,$autoWifi  - Prefer ethernet, fallback to WiFi"
+        Write-Host "    Ethernet,Ethernet 2,Wi-Fi  - Use specific adapters in order"
+        Write-Host ""
 
-        $wifiInput = Read-Host "Wi-Fi interface [$autoWifi]"
-        if (-not $wifiInput) { $wifiInput = $autoWifi }
+        $defaultPriority = ""
+        if ($autoEth -ne "Not detected" -and $autoWifi -ne "Not detected") {
+            $defaultPriority = "$autoEth,$autoWifi"
+        } elseif ($autoEth -ne "Not detected") {
+            $defaultPriority = $autoEth
+        } elseif ($autoWifi -ne "Not detected") {
+            $defaultPriority = $autoWifi
+        }
+        if ($InterfacePriority) { $defaultPriority = $InterfacePriority }
+
+        $interfacePriorityInput = Read-Host "Enter interface priority order [$defaultPriority]"
+        $InterfacePriority = if ($interfacePriorityInput) { $interfacePriorityInput } else { $defaultPriority }
+
+        # Parse first ethernet and wifi from the priority list for backward compatibility
+        if ($InterfacePriority) {
+            $interfaceList = $InterfacePriority -split ',' | ForEach-Object { $_.Trim() }
+            $ethInput = ""
+            $wifiInput = ""
+
+            foreach ($iface in $interfaceList) {
+                # Check if this looks like ethernet and we don't have one yet
+                if (-not $ethInput -and $iface -ne $autoWifi -and $iface) {
+                    $ethInput = $iface
+                }
+                # Check if this looks like wifi
+                if (-not $wifiInput -and $iface -eq $autoWifi) {
+                    $wifiInput = $iface
+                }
+            }
+
+            # Fallback to autodetected if not found
+            if (-not $ethInput) { $ethInput = $autoEth }
+            if (-not $wifiInput) { $wifiInput = $autoWifi }
+        } else {
+            $ethInput = $autoEth
+            $wifiInput = $autoWifi
+        }
 
         Write-Host ""
         Write-Host "DHCP Timeout Configuration:"
@@ -220,62 +258,54 @@ function Install {
             Write-Host "Disabled: Event-driven checks only (no periodic monitoring)"
         }
 
-        Write-Host ""
-        Write-Host "Multi-Interface Configuration (Optional):"
-        Write-Host "  Configure priority for multiple ethernet or wifi interfaces."
-        Write-Host ""
-        $configPriorityInput = Read-Host "Configure interface priority? (y/N)"
-        if ($configPriorityInput -eq "y" -or $configPriorityInput -eq "Y") {
-            Write-Host ""
-            Write-Host "Available interfaces:"
-            Get-NetAdapter | Where-Object { $_.PhysicalMediaType -match 'Ethernet|802.3|Wireless|Native 802.11' } | ForEach-Object {
-                $hwType = if ($_.PhysicalMediaType -match 'Wireless|Native 802.11') {
-                    "Wi-Fi"
-                } elseif ($_.InterfaceDescription -match 'USB') {
-                    "USB Ethernet"
-                } else {
-                    "Ethernet"
-                }
-                Write-Host "  $($_.Name) ($hwType)"
-            }
-            Write-Host ""
-            Write-Host "Enter interfaces in priority order (comma-separated, highest first):"
-            Write-Host "Example: Ethernet,Ethernet 2,Wi-Fi"
-            $defaultPriority = "$ethInput,$wifiInput"
-            $interfacePriorityInput = Read-Host "Interface priority [$defaultPriority]"
-            $interfacePriority = if ($interfacePriorityInput) { $interfacePriorityInput } else { $defaultPriority }
-            if (-not [string]::IsNullOrEmpty($interfacePriority)) {
-                Write-Host "Priority configured: $interfacePriority"
-            }
-        } else {
-            $interfacePriority = ""
-        }
     } elseif ($USE_DEFAULTS) {
         # Auto mode: Use detected interfaces and recommended defaults
         Write-Host "Auto-install mode: Using detected interfaces and recommended defaults..."
         $ethInput = $autoEth
         $wifiInput = $autoWifi
+
+        # Build default interface priority from detected interfaces
+        if (-not $InterfacePriority) {
+            if ($autoEth -ne "Not detected" -and $autoWifi -ne "Not detected") {
+                $InterfacePriority = "$autoEth,$autoWifi"
+            } elseif ($autoEth -ne "Not detected") {
+                $InterfacePriority = $autoEth
+            } elseif ($autoWifi -ne "Not detected") {
+                $InterfacePriority = $autoWifi
+            }
+        }
+
         $timeout = 7
         $checkInternet = 1
         $checkMethod = "ping"
         $checkTarget = "8.8.8.8"
         $checkInterval = 30
         $logCheckAttempts = 0
-        $interfacePriority = ""
         Write-Host "  Ethernet: $ethInput"
         Write-Host "  Wi-Fi: $wifiInput"
+        Write-Host "  Interface Priority: $InterfacePriority"
         Write-Host "  Internet monitoring: Enabled (ping to 8.8.8.8 every 30s)"
     } else {
         # Non-interactive mode: Use environment variables or defaults
         $ethInput = if ($envEth) { $envEth } else { $autoEth }
         $wifiInput = if ($envWifi) { $envWifi } else { $autoWifi }
+
+        # Build default interface priority from detected/env interfaces
+        if (-not $InterfacePriority) {
+            $priorityParts = @()
+            if ($ethInput -and $ethInput -ne "Not detected") { $priorityParts += $ethInput }
+            if ($wifiInput -and $wifiInput -ne "Not detected") { $priorityParts += $wifiInput }
+            if ($priorityParts.Count -gt 0) {
+                $InterfacePriority = $priorityParts -join ','
+            }
+        }
+
         $timeout = if ($env:TIMEOUT) { [int]$env:TIMEOUT } else { 7 }
         $checkInternet = if ($env:CHECK_INTERNET) { [int]$env:CHECK_INTERNET } else { 0 }
         $checkInterval = if ($env:CHECK_INTERVAL) { [int]$env:CHECK_INTERVAL } else { 30 }
         $checkMethod = if ($env:CHECK_METHOD) { $env:CHECK_METHOD } else { "gateway" }
         $checkTarget = if ($env:CHECK_TARGET) { $env:CHECK_TARGET } else { "" }
-        $logCheckAttempts = if ($env:LOG_CHECK_ATTEMPTS) { [int]$env:LOG_CHECK_ATTEMPTS } else { 0 }
-        $interfacePriority = if ($env:INTERFACE_PRIORITY) { $env:INTERFACE_PRIORITY } else { "" }
+        $logCheckAttempts = if ($env:LOG_ALL_CHECKS) { [int]$env:LOG_ALL_CHECKS } else { 0 }
     }
 
     if ([string]::IsNullOrWhiteSpace($ethInput) -or [string]::IsNullOrWhiteSpace($wifiInput) -or $ethInput -eq "Not detected" -or $wifiInput -eq "Not detected") {
@@ -288,6 +318,9 @@ function Install {
     Write-Host "Installation directory: $InstallDir"
     Write-Host ""
     Write-Host "Using configuration:"
+    if ($InterfacePriority) {
+        Write-Host "  Interface Priority: $InterfacePriority"
+    }
     Write-Host "  Ethernet:         $ethInput"
     Write-Host "  Wi-Fi:            $wifiInput"
     Write-Host "  DHCP Timeout:     $($timeout)s"
@@ -300,8 +333,8 @@ function Install {
         Write-Host "  Check Interval:   $($checkInterval)s"
         Write-Host "  Log All Checks:   $logCheckAttempts"
     }
-    if (-not [string]::IsNullOrEmpty($interfacePriority)) {
-        Write-Host "  Interface Priority: $interfacePriority"
+    if (-not [string]::IsNullOrEmpty($InterfacePriority)) {
+        Write-Host "  Interface Priority: $InterfacePriority"
     }
     Write-Host ""
 
@@ -335,7 +368,7 @@ function Install {
 
     # Set environment variable for the task using XML modification
     $taskXml = Export-ScheduledTask -TaskName $TaskName
-    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERNET</Name>`n        <Value>$checkInternet</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERVAL</Name>`n        <Value>$checkInterval</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_METHOD</Name>`n        <Value>$checkMethod</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_TARGET</Name>`n        <Value>$checkTarget</Value>`n      </Variable>`n      <Variable>`n        <Name>LOG_CHECK_ATTEMPTS</Name>`n        <Value>$logCheckAttempts</Value>`n      </Variable>`n      <Variable>`n        <Name>INTERFACE_PRIORITY</Name>`n        <Value>$interfacePriority</Value>`n      </Variable>`n    </EnvironmentVariables>"
+    $taskXml = $taskXml -replace '(<Actions>)', "`$1`n    <EnvironmentVariables>`n      <Variable>`n        <Name>TIMEOUT</Name>`n        <Value>$timeout</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERNET</Name>`n        <Value>$checkInternet</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_INTERVAL</Name>`n        <Value>$checkInterval</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_METHOD</Name>`n        <Value>$checkMethod</Value>`n      </Variable>`n      <Variable>`n        <Name>CHECK_TARGET</Name>`n        <Value>$checkTarget</Value>`n      </Variable>`n      <Variable>`n        <Name>LOG_ALL_CHECKS</Name>`n        <Value>$logCheckAttempts</Value>`n      </Variable>`n      <Variable>`n        <Name>INTERFACE_PRIORITY</Name>`n        <Value>$InterfacePriority</Value>`n      </Variable>`n    </EnvironmentVariables>"
     $taskXml | Register-ScheduledTask -TaskName $TaskName -Force | Out-Null
 
     Start-ScheduledTask -TaskName $TaskName
@@ -345,22 +378,44 @@ function Install {
     Write-Host ""
     Write-Host "The scheduled task is now running. Starting in 3 seconds..."
     Write-Host ""
-    Write-Host "Core Behavior:"
-    Write-Host "  • Turns Wi-Fi OFF when Ethernet is connected"
-    Write-Host "  • Turns Wi-Fi ON when Ethernet is disconnected"
-    Write-Host "  • Continues working after OS reboot"
-    Write-Host ""
+
     if ($checkInternet -eq 1) {
-        Write-Host "Internet Monitoring: Enabled"
-        if ($checkMethod -eq "gateway") {
-            Write-Host "  • Checks: Gateway connectivity every $checkInterval seconds"
-        } elseif ($checkMethod -eq "ping") {
-            Write-Host "  • Checks: Ping to $checkTarget every $checkInterval seconds"
-        } elseif ($checkMethod -eq "curl") {
-            Write-Host "  • Checks: HTTP connectivity to $checkTarget every $checkInterval seconds"
+        # Internet monitoring enabled - explain full behavior
+        Write-Host "How it works:"
+        if ($InterfacePriority) {
+            Write-Host "  • When primary interface has internet → I'll use it and disable others"
+            Write-Host "  • When primary interface loses internet → I'll switch to next working interface"
+            Write-Host "  • When higher priority interface restores internet → I'll switch back to it"
+            Write-Host "  • Interface priority: $InterfacePriority"
+        } else {
+            Write-Host "  • When Ethernet connected with internet → I'll disable WiFi"
+            Write-Host "  • When Ethernet connected but no internet → I'll switch to WiFi (automatic failover)"
+            Write-Host "  • When Ethernet disconnected → I'll switch to WiFi"
         }
+        if ($checkMethod -eq "gateway") {
+            Write-Host "  • Validates connectivity by pinging gateway every $checkInterval seconds"
+        } elseif ($checkMethod -eq "ping") {
+            Write-Host "  • Validates connectivity by pinging $checkTarget every $checkInterval seconds"
+        } elseif ($checkMethod -eq "curl") {
+            Write-Host "  • Validates connectivity via HTTP to $checkTarget every $checkInterval seconds"
+        }
+        Write-Host "  • Continues working after OS reboot"
+    } else {
+        # Internet monitoring disabled - simpler behavior
+        Write-Host "How it works:"
+        if ($InterfacePriority) {
+            Write-Host "  • I'll use highest priority interface that has an IP address"
+            Write-Host "  • Interface priority: $InterfacePriority"
+        } else {
+            Write-Host "  • When Ethernet connected (has IP) → I'll disable WiFi"
+            Write-Host "  • When Ethernet disconnected (no IP) → I'll enable WiFi"
+        }
+        Write-Host "  • Continues working after OS reboot"
         Write-Host ""
+        Write-Host "  ⚠️  Note: Internet connectivity is NOT validated."
+        Write-Host "     If an interface has IP but no internet, it will still be used."
     }
+    Write-Host ""
     Write-Host "Logging:"
     Write-Host "  Log file location: $LogDir\switcher.log (created after first run)"
     Write-Host "  View real-time logs:"

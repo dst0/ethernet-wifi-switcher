@@ -130,6 +130,46 @@ assert_file_not_exists() {
     fi
 }
 
+# Assert directory exists
+assert_dir_exists() {
+    dir="$1"
+    message="${2:-Directory should exist: $dir}"
+
+    CURRENT_TEST_ASSERTIONS=$((CURRENT_TEST_ASSERTIONS + 1))
+    TOTAL_ASSERTIONS=$((TOTAL_ASSERTIONS + 1))
+
+    if [ -d "$dir" ]; then
+        CURRENT_TEST_PASSED=$((CURRENT_TEST_PASSED + 1))
+        TOTAL_ASSERTIONS_PASSED=$((TOTAL_ASSERTIONS_PASSED + 1))
+        return 0
+    else
+        echo "  ${RED}✗${NC} $message"
+        CURRENT_TEST_FAILED=$((CURRENT_TEST_FAILED + 1))
+        TOTAL_ASSERTIONS_FAILED=$((TOTAL_ASSERTIONS_FAILED + 1))
+        return 1
+    fi
+}
+
+# Assert true (evaluates shell condition)
+assert_true() {
+    condition="$1"
+    message="${2:-Condition should be true}"
+
+    CURRENT_TEST_ASSERTIONS=$((CURRENT_TEST_ASSERTIONS + 1))
+    TOTAL_ASSERTIONS=$((TOTAL_ASSERTIONS + 1))
+
+    if eval "$condition"; then
+        CURRENT_TEST_PASSED=$((CURRENT_TEST_PASSED + 1))
+        TOTAL_ASSERTIONS_PASSED=$((TOTAL_ASSERTIONS_PASSED + 1))
+        return 0
+    else
+        echo "  ${RED}✗${NC} $message"
+        CURRENT_TEST_FAILED=$((CURRENT_TEST_FAILED + 1))
+        TOTAL_ASSERTIONS_FAILED=$((TOTAL_ASSERTIONS_FAILED + 1))
+        return 1
+    fi
+}
+
 # Assert contains
 assert_contains() {
     haystack="$1"
@@ -148,6 +188,27 @@ assert_contains() {
         CURRENT_TEST_FAILED=$((CURRENT_TEST_FAILED + 1))
         TOTAL_ASSERTIONS_FAILED=$((TOTAL_ASSERTIONS_FAILED + 1))
         return 1
+    fi
+}
+
+# Assert does not contain
+assert_not_contains() {
+    haystack="$1"
+    needle="$2"
+    message="${3:-String should not contain substring}"
+
+    CURRENT_TEST_ASSERTIONS=$((CURRENT_TEST_ASSERTIONS + 1))
+    TOTAL_ASSERTIONS=$((TOTAL_ASSERTIONS + 1))
+
+    if echo "$haystack" | grep -q "$needle"; then
+        echo "  ${RED}✗${NC} $message (found: '$needle')"
+        CURRENT_TEST_FAILED=$((CURRENT_TEST_FAILED + 1))
+        TOTAL_ASSERTIONS_FAILED=$((TOTAL_ASSERTIONS_FAILED + 1))
+        return 1
+    else
+        CURRENT_TEST_PASSED=$((CURRENT_TEST_PASSED + 1))
+        TOTAL_ASSERTIONS_PASSED=$((TOTAL_ASSERTIONS_PASSED + 1))
+        return 0
     fi
 }
 

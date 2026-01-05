@@ -10,7 +10,7 @@ CHECK_INTERNET="${CHECK_INTERNET:-0}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
 CHECK_METHOD="${CHECK_METHOD:-gateway}"
 CHECK_TARGET="${CHECK_TARGET:-}"
-LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
+LOG_ALL_CHECKS="${LOG_ALL_CHECKS:-0}"
 INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
 LAST_CHECK_STATE_FILE="${STATE_FILE}.last_check"
 
@@ -106,7 +106,7 @@ check_internet() {
             # Get the gateway for this interface
             gateway=$(ip route show dev "$iface" | grep default | awk '{print $3}' | head -n 1)
             if [ -z "$gateway" ]; then
-                if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                if [ "$LOG_ALL_CHECKS" = "1" ]; then
                     log "No gateway found for $iface"
                 fi
                 return 1
@@ -115,7 +115,7 @@ check_internet() {
             if ping -I "$iface" -c 1 -W 2 "$gateway" >/dev/null 2>&1; then
                 result=0
             fi
-            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+            if [ "$LOG_ALL_CHECKS" = "1" ]; then
                 if [ $result -eq 0 ]; then
                     log "Internet check: gateway ping to $gateway via $iface succeeded"
                 else
@@ -133,7 +133,7 @@ check_internet() {
             if ping -I "$iface" -c 1 -W 3 "$CHECK_TARGET" >/dev/null 2>&1; then
                 result=0
             fi
-            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+            if [ "$LOG_ALL_CHECKS" = "1" ]; then
                 if [ $result -eq 0 ]; then
                     log "Internet check: ping to $CHECK_TARGET via $iface succeeded"
                 else
@@ -160,7 +160,7 @@ check_internet() {
                     fi
                 fi
             fi
-            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+            if [ "$LOG_ALL_CHECKS" = "1" ]; then
                 if [ $result -eq 0 ]; then
                     log "Internet check: HTTP check to $CHECK_TARGET via $iface succeeded"
                 else
@@ -175,7 +175,7 @@ check_internet() {
             ;;
     esac
 
-    # Log state changes (always logged regardless of LOG_CHECK_ATTEMPTS)
+    # Log state changes (always logged regardless of LOG_ALL_CHECKS)
     last_check_state=$(cat "$LAST_CHECK_STATE_FILE" 2>/dev/null || echo "")
     current_check_state="success"
     if [ $result -ne 0 ]; then
@@ -247,12 +247,12 @@ ensure_wifi_on_and_wait() {
     iface="$1"
     # Check if wifi is disabled or not connected
     if [ "$wifi_enabled" = "disabled" ] || [ "$(get_iface_state "$iface")" != "connected" ]; then
-        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+        if [ "$LOG_ALL_CHECKS" = "1" ]; then
             log "  Enabling WiFi ($iface) to check for internet..."
         fi
         enable_wifi
 
-        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+        if [ "$LOG_ALL_CHECKS" = "1" ]; then
            log "  Waiting for IP address on $iface..."
         fi
 
@@ -297,13 +297,13 @@ check_and_switch() {
     # If internet checking is enabled, validate the ACTIVE connection
     if [ "$CHECK_INTERNET" = "1" ] && [ -n "$active_iface" ]; then
         active_has_internet=0
-        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+        if [ "$LOG_ALL_CHECKS" = "1" ]; then
             log "Checking internet on active interface: $active_iface ($active_type)"
         fi
 
         if check_internet "$active_iface"; then
             active_has_internet=1
-            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+            if [ "$LOG_ALL_CHECKS" = "1" ]; then
                 log "✓ Active interface $active_iface has internet"
             fi
         fi
@@ -325,7 +325,7 @@ check_and_switch() {
 
             # Check all HIGHER priority interfaces
             if [ $active_position -gt 1 ]; then
-                if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                if [ "$LOG_ALL_CHECKS" = "1" ]; then
                     log "Checking higher priority interfaces for recovery..."
                 fi
 
@@ -351,7 +351,7 @@ check_and_switch() {
                     # Check if interface is connected
                     iface_state=$(get_iface_state "$iface")
                     if [ "$iface_state" = "connected" ]; then
-                        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                        if [ "$LOG_ALL_CHECKS" = "1" ]; then
                             log "  Checking $iface..."
                         fi
                         if check_internet "$iface"; then
@@ -359,12 +359,12 @@ check_and_switch() {
                             found_higher_priority="$iface"
                             break
                         else
-                            if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                            if [ "$LOG_ALL_CHECKS" = "1" ]; then
                                 log "  No internet on $iface"
                             fi
                         fi
                     else
-                        if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                        if [ "$LOG_ALL_CHECKS" = "1" ]; then
                             log "  Interface $iface is not connected (state: ${iface_state:-unknown})"
                         fi
                     fi
@@ -427,7 +427,7 @@ check_and_switch() {
                 # Check if interface is connected
                 iface_state=$(get_iface_state "$iface")
                 if [ "$iface_state" = "connected" ]; then
-                    if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                    if [ "$LOG_ALL_CHECKS" = "1" ]; then
                         log "  Checking $iface..."
                     fi
                     if check_internet "$iface"; then
@@ -438,7 +438,7 @@ check_and_switch() {
                         log "  No internet on $iface"
                     fi
                 else
-                    if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                    if [ "$LOG_ALL_CHECKS" = "1" ]; then
                         log "  Interface $iface is not connected (state: ${iface_state:-unknown})"
                     fi
                 fi
@@ -446,7 +446,7 @@ check_and_switch() {
         else
             # No priority list - try ethernet then wifi
             if [ "$active_type" = "wifi" ] && eth_is_connected "$eth_dev"; then
-                if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                if [ "$LOG_ALL_CHECKS" = "1" ]; then
                     log "  Checking $eth_dev (ethernet)..."
                 fi
                 if check_internet "$eth_dev"; then
@@ -460,7 +460,7 @@ check_and_switch() {
                 fi
                 wifi_state=$(get_iface_state "$wifi_dev")
                 if [ "$wifi_state" = "connected" ]; then
-                    if [ "$LOG_CHECK_ATTEMPTS" = "1" ]; then
+                    if [ "$LOG_ALL_CHECKS" = "1" ]; then
                         log "  Checking $wifi_dev (wifi)..."
                     fi
                     if check_internet "$wifi_dev"; then

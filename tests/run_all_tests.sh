@@ -10,10 +10,42 @@ echo ""
 
 FAILED=0
 
-# Run unit tests
+# Run unit tests - both test_*.sh and *.test.sh patterns
 echo "→ Running unit tests..."
 echo ""
 
+# Primary real unit tests (high value - test actual source code)
+echo "=== Real Unit Tests (source actual code) ==="
+
+# Run all macOS unit tests
+for test_file in unit/macos*.test.sh; do
+    if [ -f "$test_file" ]; then
+        echo "Running $(basename "$test_file")..."
+        if sh "$test_file"; then
+            echo ""
+        else
+            FAILED=$((FAILED + 1))
+            echo "FAILED: $test_file"
+            echo ""
+        fi
+    fi
+done
+
+# Run Linux-specific unit tests
+for test_file in unit/linux*.test.sh; do
+    if [ -f "$test_file" ]; then
+        echo "Running $(basename "$test_file")..."
+        if sh "$test_file"; then
+            echo ""
+        else
+            FAILED=$((FAILED + 1))
+            echo "FAILED: $test_file"
+            echo ""
+        fi
+    fi
+done
+
+# Legacy unit tests (test_*.sh pattern)
 for test_file in unit/test_*.sh; do
     if [ -f "$test_file" ]; then
         echo "Running $(basename "$test_file")..."

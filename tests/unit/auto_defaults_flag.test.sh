@@ -41,7 +41,7 @@ if [ "1" = "1" ]; then  # Simulate USE_DEFAULTS=1
     CHECK_METHOD="${CHECK_METHOD:-ping}"
     CHECK_TARGET="${CHECK_TARGET:-8.8.8.8}"
     TIMEOUT="${TIMEOUT:-7}"
-    LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
+    LOG_ALL_CHECKS="${LOG_ALL_CHECKS:-0}"
 fi
 
 assert_equals "1" "$CHECK_INTERNET" "CHECK_INTERNET should be enabled in auto mode"
@@ -49,7 +49,7 @@ assert_equals "30" "$CHECK_INTERVAL" "CHECK_INTERVAL should be 30 seconds"
 assert_equals "ping" "$CHECK_METHOD" "CHECK_METHOD should be ping (not gateway)"
 assert_equals "8.8.8.8" "$CHECK_TARGET" "CHECK_TARGET should be 8.8.8.8"
 assert_equals "7" "$TIMEOUT" "TIMEOUT should be 7 seconds"
-assert_equals "0" "$LOG_CHECK_ATTEMPTS" "LOG_CHECK_ATTEMPTS should be disabled"
+assert_equals "0" "$LOG_ALL_CHECKS" "LOG_ALL_CHECKS should be disabled"
 
 test_start "uninstall_flag_preserved"
 # Verify --uninstall flag doesn't trigger USE_DEFAULTS

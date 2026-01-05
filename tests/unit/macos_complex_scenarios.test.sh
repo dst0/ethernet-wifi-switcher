@@ -1,161 +1,410 @@
 #!/bin/sh
-# macOS-specific complex scenarios and edge cases
-# Tests race conditions, rapid toggling, interface state edge cases
-# Note: Not using set -e to allow testing failure cases
+# Real integration-style tests for macOS complex scenarios
+# Tests actual state machine behavior from src/macos/switcher.sh
 
-# Load test framework
-. "$(dirname "$0")/../lib/assert.sh"
+set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+. "$SCRIPT_DIR/../lib/assert.sh"
+. "$SCRIPT_DIR/../lib/mock.sh"
+
+# Setup test environment
 setup() {
-    :
-}
+    MOCK_DIR="/tmp/macos-complex-test-$$"
+    mkdir -p "$MOCK_DIR/bin" "$MOCK_DIR/state"
+    export PATH="$MOCK_DIR/bin:$PATH"
 
-# Test: Rapid interface changes
-test_rapid_interface_changes() {
-    test_start "rapid_interface_changes"
-    setup
-
-    export INTERFACE_PRIORITY="en5,en0"
-
-    # Simulate rapid switching: eth loses internet, switch to wifi, eth recovers
-    step1_eth_active="yes"
-    step2_eth_internet="no"
-    step3_wifi_active="yes"
-    step4_eth_internet="yes"
-
-    assert_equals "yes" "$step1_eth_active" "Should start on ethernet"
-    assert_equals "no" "$step2_eth_internet" "Ethernet loses internet"
-    assert_equals "yes" "$step3_wifi_active" "Should switch to WiFi"
-    assert_equals "yes" "$step4_eth_internet" "Ethernet recovers"
-}
-
-# Test: Multiple interface state changes simultaneously
-test_simultaneous_interface_changes() {
-    test_start "simultaneous_interface_changes"
-    setup
-
-    export INTERFACE_PRIORITY="en5,en8,en0"
-
-    # Simulate: multiple interfaces state changing at once
-    en5_state_before="connected"
-    en8_state_before="disconnected"
-    en0_state_before="connected"
-
-    en5_state_after="disconnected"
-    en8_state_after="connected"
-    en0_state_after="connected"
-
-    assert_equals "connected" "$en5_state_before" "en5 starts connected"
-    assert_equals "disconnected" "$en5_state_after" "en5 becomes disconnected"
-}
-
-# Test: Internet check during interface transition
-test_internet_check_during_transition() {
-    test_start "internet_check_during_transition"
-    setup
-
+    export WIFI_DEV="en0"
+    export ETH_DEV="en5"
+    export STATE_DIR="$MOCK_DIR/state"
+    export STATE_FILE="$STATE_DIR/eth-wifi-state"
+    export LAST_CHECK_STATE_FILE="$STATE_FILE.last_check"
+    export TIMEOUT="2"
     export CHECK_INTERNET="1"
+    export LOG_ALL_CHECKS="0"
+    export INTERFACE_PRIORITY=""
     export CHECK_INTERVAL="30"
-
-    # Scenario: internet check happens while switching interfaces
-    current_iface_before="en5"
-    current_iface_after="en0"
-
-    # Check should succeed on new interface
-    check_result="success"
-
-    assert_equals "success" "$check_result" "Internet check should succeed on new interface"
-}
-
-# Test: WiFi disabled then enabled
-test_wifi_disabled_then_enabled() {
-    test_start "wifi_disabled_then_enabled"
-    setup
-
-    wifi_state_initial="off"
-    action="enable"
-    wifi_state_final="on"
-
-    assert_equals "off" "$wifi_state_initial" "WiFi starts disabled"
-    assert_equals "on" "$wifi_state_final" "WiFi should be enabled"
-}
-
-# Test: Very fast state changes (bounce scenario)
-test_fast_state_bounce() {
-    test_start "fast_state_bounce"
-    setup
-
-    export CHECK_INTERVAL="30"
-
-    # Simulate: internet state bouncing (on/off/on in quick succession)
-    state_check1="success"
-    state_check2="failed"
-    state_check3="success"
-
-    assert_equals "success" "$state_check1" "First check succeeds"
-    assert_equals "failed" "$state_check2" "Second check fails"
-    assert_equals "success" "$state_check3" "Third check succeeds"
-}
-
-# Test: Gateway change while active
-test_gateway_change_while_active() {
-    test_start "gateway_change_while_active"
-    setup
-
     export CHECK_METHOD="gateway"
+    export CHECK_TARGET=""
+    export ETH_CONNECT_TIMEOUT="5"
+    export ETH_CONNECT_RETRIES="1"
+    export ETH_RETRY_INTERVAL="0"
 
-    # Current gateway
-    gateway_before="192.168.1.1"
+    export NETWORKSETUP="$MOCK_DIR/bin/networksetup"
+    export DATE="date"
+    export IPCONFIG="$MOCK_DIR/bin/ipconfig"
+    export IFCONFIG="$MOCK_DIR/bin/ifconfig"
 
-    # Gateway changes (e.g., network topology change)
-    gateway_after="192.168.1.254"
-
-    # Should adapt to new gateway
-    assert_equals "192.168.1.1" "$gateway_before" "Initial gateway"
-    assert_equals "192.168.1.254" "$gateway_after" "Should adapt to new gateway"
+    rm -f "$STATE_FILE" "$LAST_CHECK_STATE_FILE" 2>/dev/null || true
 }
 
-# Test: Interface becomes unavailable mid-check
-test_interface_becomes_unavailable() {
-    test_start "interface_becomes_unavailable"
-    setup
-
-    iface="en5"
-    state_before="connected"
-    state_after="unavailable"
-
-    # Should fallback gracefully
-    fallback_iface="en0"
-
-    assert_equals "connected" "$state_before" "Interface starts connected"
-    assert_equals "unavailable" "$state_after" "Interface becomes unavailable"
-    assert_equals "en0" "$fallback_iface" "Should fallback to en0"
+source_switcher() {
+    . "$PROJECT_ROOT/src/macos/switcher.sh"
 }
 
-# Test: Recovery from all interfaces down
-test_recovery_from_all_down() {
-    test_start "recovery_from_all_down"
+cleanup() {
+    rm -rf "$MOCK_DIR"
+}
+
+# ============================================================================
+# Test: Full ethernet connection sequence
+# ============================================================================
+
+test_full_eth_connect_sequence() {
+    test_start "full_eth_connect_sequence"
     setup
+
+    # Initial state: WiFi on, ethernet active with IP
+    echo "on" > "$MOCK_DIR/wifi_state"
+
+    cat > "$MOCK_DIR/bin/networksetup" << EOF
+#!/bin/sh
+MOCK_DIR="$MOCK_DIR"
+if [ "\$1" = "-getairportpower" ]; then
+    state=\$(cat "\$MOCK_DIR/wifi_state")
+    if [ "\$state" = "on" ]; then
+        echo "Wi-Fi Power (en0): On"
+    else
+        echo "Wi-Fi Power (en0): Off"
+    fi
+elif [ "\$1" = "-setairportpower" ]; then
+    echo "\$3" > "\$MOCK_DIR/wifi_state"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/networksetup"
+
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "en5" ]; then
+    echo "en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>"
+    echo "\tstatus: active"
+    echo "\tinet 192.168.1.100 netmask 0xffffff00"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "getifaddr" ] && [ "$2" = "en5" ]; then
+  echo "192.168.1.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    cat > "$MOCK_DIR/bin/netstat" << 'EOF'
+#!/bin/sh
+echo "default            192.168.1.1        UGSc           en5"
+EOF
+    chmod +x "$MOCK_DIR/bin/netstat"
+
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
+
+    source_switcher
+
+    # Real orchestration
+    switcher_tick
+
+    final_state=$(read_last_state)
+    final_wifi=$(cat "$MOCK_DIR/wifi_state")
+
+    assert_equals "connected" "$final_state" "State should be connected"
+    assert_equals "off" "$final_wifi" "WiFi should be off"
+    cleanup
+}
+
+# ============================================================================
+# Test: Ethernet disconnect and failover
+# ============================================================================
+
+test_eth_disconnect_failover() {
+    test_start "eth_disconnect_failover"
+    setup
+
+    # Initial state: Ethernet previously connected, WiFi off
+    echo "connected" > "$STATE_FILE"
+    echo "off" > "$MOCK_DIR/wifi_state"
+
+    cat > "$MOCK_DIR/bin/networksetup" << EOF
+#!/bin/sh
+MOCK_DIR="$MOCK_DIR"
+if [ "\$1" = "-getairportpower" ]; then
+    state=\$(cat "\$MOCK_DIR/wifi_state")
+    if [ "\$state" = "on" ]; then
+        echo "Wi-Fi Power (en0): On"
+    else
+        echo "Wi-Fi Power (en0): Off"
+    fi
+elif [ "\$1" = "-setairportpower" ]; then
+    echo "\$3" > "\$MOCK_DIR/wifi_state"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/networksetup"
+
+    # Ethernet disconnected - no link
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "en5" ]; then
+  echo "en5: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST>"
+  echo "\tstatus: inactive"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
+
+    # No IP on ethernet, no IP on wifi yet
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    source_switcher
+
+    export CHECK_INTERNET="0"
+    switcher_tick
+
+    final_state=$(read_last_state)
+    final_wifi=$(cat "$MOCK_DIR/wifi_state")
+
+    assert_equals "disconnected" "$final_state" "State should be disconnected"
+    assert_equals "on" "$final_wifi" "WiFi should be on"
+    cleanup
+}
+
+# ============================================================================
+# Test: Internet loss triggers failover
+# ============================================================================
+
+test_internet_loss_triggers_failover() {
+    test_start "internet_loss_triggers_failover"
+    setup
+
+    # Previous state: connected
+    echo "connected" > "$STATE_FILE"
+    echo "off" > "$MOCK_DIR/wifi_state"
+
+    cat > "$MOCK_DIR/bin/networksetup" << EOF
+#!/bin/sh
+MOCK_DIR="$MOCK_DIR"
+if [ "\$1" = "-getairportpower" ]; then
+    state=\$(cat "\$MOCK_DIR/wifi_state")
+    if [ "\$state" = "on" ]; then
+        echo "Wi-Fi Power (en0): On"
+    else
+        echo "Wi-Fi Power (en0): Off"
+    fi
+elif [ "\$1" = "-setairportpower" ]; then
+    echo "\$3" > "\$MOCK_DIR/wifi_state"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/networksetup"
+
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "en5" ]; then
+  echo "en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>"
+  echo "\tstatus: active"
+  echo "\tinet 192.168.1.100 netmask 0xffffff00"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "getifaddr" ] && [ "$2" = "en5" ]; then
+  echo "192.168.1.100"
+elif [ "$1" = "getifaddr" ] && [ "$2" = "en0" ]; then
+  echo "192.168.2.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    cat > "$MOCK_DIR/bin/netstat" << 'EOF'
+#!/bin/sh
+echo "default            192.168.1.1        UGSc           en5"
+EOF
+    chmod +x "$MOCK_DIR/bin/netstat"
+
+    # gateway ping fails -> no internet on active eth
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 1
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
+
+    # inactive interface checks use curl -> make wifi succeed
+    cat > "$MOCK_DIR/bin/curl" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/curl"
 
     export INTERFACE_PRIORITY="en5,en0"
 
-    # Scenario: both interfaces down, then eth comes back up
-    all_down="yes"
-    eth_recovers="yes"
+    source_switcher
 
-    assert_equals "yes" "$all_down" "All interfaces should be down initially"
-    assert_equals "yes" "$eth_recovers" "Ethernet should recover"
+    switcher_tick
+
+    final_state=$(read_last_state)
+    final_wifi=$(cat "$MOCK_DIR/wifi_state")
+
+    assert_equals "disconnected" "$final_state" "Should switch state to disconnected (WiFi active)"
+    assert_equals "on" "$final_wifi" "WiFi should be on for failover"
+    cleanup
 }
 
-# Run all tests
-test_rapid_interface_changes
-test_simultaneous_interface_changes
-test_internet_check_during_transition
-test_wifi_disabled_then_enabled
-test_fast_state_bounce
-test_gateway_change_while_active
-test_interface_becomes_unavailable
-test_recovery_from_all_down
+# ============================================================================
+# Test: Recovery from failover
+# ============================================================================
 
-# Print summary
+test_recovery_from_failover() {
+    test_start "recovery_from_failover"
+    setup
+
+    # Previous state: disconnected (WiFi active)
+    echo "disconnected" > "$STATE_FILE"
+    echo "on" > "$MOCK_DIR/wifi_state"
+
+    cat > "$MOCK_DIR/bin/networksetup" << EOF
+#!/bin/sh
+MOCK_DIR="$MOCK_DIR"
+if [ "\$1" = "-getairportpower" ]; then
+    state=\$(cat "\$MOCK_DIR/wifi_state")
+    if [ "\$state" = "on" ]; then
+        echo "Wi-Fi Power (en0): On"
+    else
+        echo "Wi-Fi Power (en0): Off"
+    fi
+elif [ "\$1" = "-setairportpower" ]; then
+    echo "\$3" > "\$MOCK_DIR/wifi_state"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/networksetup"
+
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "en5" ]; then
+  echo "en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>"
+  echo "\tstatus: active"
+  echo "\tinet 192.168.1.100 netmask 0xffffff00"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "getifaddr" ] && [ "$2" = "en5" ]; then
+  echo "192.168.1.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    cat > "$MOCK_DIR/bin/netstat" << 'EOF'
+#!/bin/sh
+echo "default            192.168.1.1        UGSc           en5"
+EOF
+    chmod +x "$MOCK_DIR/bin/netstat"
+
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
+
+    source_switcher
+
+    switcher_tick
+
+    final_state=$(read_last_state)
+    final_wifi=$(cat "$MOCK_DIR/wifi_state")
+
+    assert_equals "connected" "$final_state" "Should recover to ethernet (connected)"
+    assert_equals "off" "$final_wifi" "WiFi should be off after recovery"
+    cleanup
+}
+
+# ============================================================================
+# Test: No action when already in correct state
+# ============================================================================
+
+test_no_action_when_correct_state() {
+    test_start "no_action_when_correct_state"
+    setup
+
+    # Ethernet connected, WiFi already off
+    echo "connected" > "$STATE_FILE"
+    echo "off" > "$MOCK_DIR/wifi_state"
+
+    cat > "$MOCK_DIR/bin/networksetup" << EOF
+#!/bin/sh
+MOCK_DIR="$MOCK_DIR"
+if [ "\$1" = "-getairportpower" ]; then
+    echo "Wi-Fi Power (en0): Off"
+elif [ "\$1" = "-setairportpower" ]; then
+    echo "UNEXPECTED_WIFI_CHANGE" > "\$MOCK_DIR/unexpected_action"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/networksetup"
+
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "en5" ]; then
+  echo "en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST>"
+  echo "\tstatus: active"
+  echo "\tinet 192.168.1.100 netmask 0xffffff00"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "getifaddr" ] && [ "$2" = "en5" ]; then
+  echo "192.168.1.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    cat > "$MOCK_DIR/bin/netstat" << 'EOF'
+#!/bin/sh
+echo "default            192.168.1.1        UGSc           en5"
+EOF
+    chmod +x "$MOCK_DIR/bin/netstat"
+
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
+
+    source_switcher
+
+    switcher_tick
+
+    had_action=$( [ -f "$MOCK_DIR/unexpected_action" ] && echo "yes" || echo "no" )
+
+    assert_equals "no" "$had_action" "No WiFi action when already in correct state"
+    cleanup
+}
+
+# ============================================================================
+# Run all tests
+# ============================================================================
+
+echo "============================================"
+echo "macOS Complex Scenarios Real Unit Tests"
+echo "============================================"
+echo "Testing ACTUAL state machine behavior from src/macos/switcher.sh"
+echo ""
+
+test_full_eth_connect_sequence
+test_eth_disconnect_failover
+test_internet_loss_triggers_failover
+test_recovery_from_failover
+test_no_action_when_correct_state
+
 test_summary

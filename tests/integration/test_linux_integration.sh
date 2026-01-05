@@ -21,14 +21,12 @@ docker run --rm \
         set -e
         echo '1. Testing installation with environment overrides...'
         # Use environment variables to avoid interactive prompts and nmcli issues
-        export ETHERNET_INTERFACE=eth0
-        export WIFI_INTERFACE=wlan0
         export CHECK_INTERNET=1
         export CHECK_METHOD=gateway
         export INTERFACE_PRIORITY='eth0,wlan0'
         export CHECK_TARGET=''
         export CHECK_INTERVAL=10
-        export LOG_CHECK_ATTEMPTS=0
+        export LOG_ALL_CHECKS=0
         export TEST_MODE=1  # Skip systemd operations
 
         sudo -E bash /test/install-linux.sh <<EOF

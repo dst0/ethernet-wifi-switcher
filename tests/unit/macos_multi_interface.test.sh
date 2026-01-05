@@ -1,137 +1,288 @@
 #!/bin/sh
-# macOS-specific multi-interface priority selection tests
-# Tests interface selection based on priority configuration
-# Note: Not using set -e to allow testing failure cases
+# Real unit tests for macOS multi-interface detection functionality
+# Tests actual get_eth_dev, get_wifi_dev with INTERFACE_PRIORITY from src/macos/switcher.sh
+#
+# NOTE: The switcher script expects ETH_DEV and WIFI_DEV to be configured at install time.
+# These tests verify the INTERFACE_PRIORITY feature and basic device selection.
 
-# Load test framework
-. "$(dirname "$0")/../lib/assert.sh"
+set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+. "$SCRIPT_DIR/../lib/assert.sh"
+. "$SCRIPT_DIR/../lib/mock.sh"
+
+# Setup test environment
 setup() {
-    :
+    MOCK_DIR="/tmp/macos-multi-iface-test-$$"
+    mkdir -p "$MOCK_DIR/bin" "$MOCK_DIR/state"
+    export PATH="$MOCK_DIR/bin:$PATH"
+
+    # Set default devices (as installer would)
+    export WIFI_DEV="en0"
+    export ETH_DEV="en5"
+    export STATE_DIR="$MOCK_DIR/state"
+    export STATE_FILE="$STATE_DIR/eth-wifi-state"
+    export LAST_CHECK_STATE_FILE="$STATE_FILE.last_check"
+    export TIMEOUT="2"
+    export CHECK_INTERNET="1"
+    export LOG_ALL_CHECKS="0"
+    export INTERFACE_PRIORITY=""
+    export CHECK_INTERVAL="30"
+    export CHECK_METHOD="gateway"
+    export CHECK_TARGET=""
+    export ETH_CONNECT_TIMEOUT="5"
+    export ETH_CONNECT_RETRIES="1"
+    export ETH_RETRY_INTERVAL="1"
+
+    export NETWORKSETUP="$MOCK_DIR/bin/networksetup"
+    export DATE="date"
+    export IPCONFIG="$MOCK_DIR/bin/ipconfig"
+    export IFCONFIG="$MOCK_DIR/bin/ifconfig"
+
+    rm -f "$STATE_FILE" "$LAST_CHECK_STATE_FILE" 2>/dev/null || true
 }
 
-# macOS interface selection by priority
-select_interface_by_priority() {
-    priority_list="$1"
-
-    # Parse priority list and return first available connected interface
-    OLD_IFS="$IFS"
-    IFS=','
-    for iface in $priority_list; do
-        IFS="$OLD_IFS"
-        iface=$(echo "$iface" | xargs) # trim whitespace
-
-        # Check if interface is connected (simplified for testing)
-        if [ -n "$iface" ]; then
-            echo "$iface"
-            return 0
-        fi
-    done
-    IFS="$OLD_IFS"
-
-    return 1
+source_switcher() {
+    . "$PROJECT_ROOT/src/macos/switcher.sh"
 }
 
-# Test: Priority list selection
-test_priority_list_selection() {
-    test_start "priority_list_selection"
+cleanup() {
+    rm -rf "$MOCK_DIR"
+}
+
+# ============================================================================
+# Test: get_eth_dev returns configured device
+# ============================================================================
+
+test_get_eth_dev_returns_configured() {
+    test_start "get_eth_dev_returns_configured"
     setup
+    export ETH_DEV="en5"
+    export INTERFACE_PRIORITY=""
 
-    export INTERFACE_PRIORITY="en5,en0"
+    source_switcher
 
-    # Should select en5 as it's first in priority list
-    selected="en5"
-    assert_equals "en5" "$selected" "Should select first in priority list"
+    eth_dev=$(get_eth_dev)
+    assert_equals "en5" "$eth_dev" "Should return configured ETH_DEV"
+    cleanup
 }
 
-# Test: Ethernet priority over WiFi
-test_ethernet_priority_over_wifi() {
-    test_start "ethernet_priority_over_wifi"
+test_get_eth_dev_different_device() {
+    test_start "get_eth_dev_different_device"
     setup
+    export ETH_DEV="en8"
+    export INTERFACE_PRIORITY=""
 
-    export INTERFACE_PRIORITY="en5,en0"
+    source_switcher
 
-    # en5 is ethernet, en0 is wifi
-    # Ethernet should be preferred
-    eth_priority="higher"
-    wifi_priority="lower"
-    selected="en5"
-
-    assert_equals "higher" "$eth_priority" "Ethernet should have higher priority"
-    assert_equals "en5" "$selected" "Should select ethernet"
+    eth_dev=$(get_eth_dev)
+    assert_equals "en8" "$eth_dev" "Should return configured ETH_DEV=en8"
+    cleanup
 }
 
-# Test: Multiple ethernet interfaces
-test_multiple_ethernet_selection() {
-    test_start "multiple_ethernet_selection"
+# ============================================================================
+# Test: get_wifi_dev returns configured device
+# ============================================================================
+
+test_get_wifi_dev_returns_configured() {
+    test_start "get_wifi_dev_returns_configured"
     setup
+    export WIFI_DEV="en0"
+    export INTERFACE_PRIORITY=""
 
-    export INTERFACE_PRIORITY="en5,en8,en0"
+    source_switcher
 
-    # If en5 is not available, should try en8
-    en5_available="no"
-    en8_available="yes"
-    selected="en8"
-
-    assert_equals "yes" "$en8_available" "en8 should be available"
-    assert_equals "en8" "$selected" "Should select en8 when en5 unavailable"
+    wifi_dev=$(get_wifi_dev)
+    assert_equals "en0" "$wifi_dev" "Should return configured WIFI_DEV"
+    cleanup
 }
 
-# Test: Fallback when preferred unavailable
-test_fallback_when_preferred_unavailable() {
-    test_start "fallback_when_preferred_unavailable"
+test_get_wifi_dev_different_device() {
+    test_start "get_wifi_dev_different_device"
     setup
+    export WIFI_DEV="en1"
+    export INTERFACE_PRIORITY=""
 
-    export INTERFACE_PRIORITY="en5,en0"
+    source_switcher
 
-    # en5 is not connected
-    en5_connected="no"
-
-    # Should fallback to en0
-    fallback_iface="en0"
-    assert_equals "no" "$en5_connected" "Preferred interface should be unavailable"
-    assert_equals "en0" "$fallback_iface" "Should fallback to wifi"
+    wifi_dev=$(get_wifi_dev)
+    assert_equals "en1" "$wifi_dev" "Should return configured WIFI_DEV=en1"
+    cleanup
 }
 
-# Test: No priority list - use defaults
-test_no_priority_list_default() {
-    test_start "no_priority_list_default"
+# ============================================================================
+# Test: INTERFACE_PRIORITY selects first available ethernet
+# ============================================================================
+
+test_interface_priority_selects_first_available() {
+    test_start "interface_priority_selects_first_available"
     setup
+    export INTERFACE_PRIORITY="en7,en5"
+    export ETH_DEV="en5"
 
-    # When no priority list, use defaults
-    interface_priority=""
-    default_eth="en5"
-    default_wifi="en0"
+    # Mock ifconfig to show en7 as available
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+case "$1" in
+    en7)
+        echo "en7: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>"
+        echo "        status: active"
+        ;;
+    en5)
+        echo "en5: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>"
+        echo "        status: active"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
 
-    assert_equals "" "$interface_priority" "No priority list configured"
-    assert_equals "en5" "$default_eth" "Should have default ethernet"
-    assert_equals "en0" "$default_wifi" "Should have default wifi"
+    source_switcher
+
+    eth_dev=$(get_eth_dev)
+    assert_equals "en7" "$eth_dev" "INTERFACE_PRIORITY should select en7 first"
+    cleanup
 }
 
-# Test: Dynamic priority list update
-test_dynamic_priority_update() {
-    test_start "dynamic_priority_update"
+test_interface_priority_skips_unavailable() {
+    test_start "interface_priority_skips_unavailable"
     setup
+    export INTERFACE_PRIORITY="en9,en7,en5"
+    export ETH_DEV="en5"
 
-    # Initial priority
-    export INTERFACE_PRIORITY="en5,en0"
-    initial="en5"
+    # Mock ifconfig: en9 doesn't exist, en7 exists
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+case "$1" in
+    en7)
+        echo "en7: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>"
+        echo "        status: active"
+        ;;
+    en5)
+        echo "en5: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>"
+        echo "        status: active"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
 
-    # Priority changes (e.g., user preference changed)
+    source_switcher
+
+    eth_dev=$(get_eth_dev)
+    assert_equals "en7" "$eth_dev" "Should skip unavailable en9 and select en7"
+    cleanup
+}
+
+test_interface_priority_skips_wifi_device() {
+    test_start "interface_priority_skips_wifi_device"
+    setup
     export INTERFACE_PRIORITY="en0,en5"
-    updated="en0"
+    export WIFI_DEV="en0"
+    export ETH_DEV="en5"
 
-    assert_equals "en5" "$initial" "Should use initial priority"
-    assert_equals "en0" "$updated" "Should use updated priority"
+    # Mock ifconfig: both exist
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+case "$1" in
+    en0)
+        echo "en0: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>"
+        echo "        status: active"
+        ;;
+    en5)
+        echo "en5: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>"
+        echo "        status: active"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
+
+    source_switcher
+
+    eth_dev=$(get_eth_dev)
+    # Should skip en0 (WIFI_DEV) and return en5
+    assert_equals "en5" "$eth_dev" "Should skip wifi device in priority list"
+    cleanup
 }
 
-# Run all tests
-test_priority_list_selection
-test_ethernet_priority_over_wifi
-test_multiple_ethernet_selection
-test_fallback_when_preferred_unavailable
-test_no_priority_list_default
-test_dynamic_priority_update
+# ============================================================================
+# Test: INTERFACE_PRIORITY for wifi selection
+# ============================================================================
 
-# Print summary
+test_interface_priority_wifi_selection() {
+    test_start "interface_priority_wifi_selection"
+    setup
+    export INTERFACE_PRIORITY="en0,en1"
+    export WIFI_DEV="en1"
+
+    source_switcher
+
+    wifi_dev=$(get_wifi_dev)
+    # When INTERFACE_PRIORITY contains WIFI_DEV, it should be returned
+    assert_equals "en1" "$wifi_dev" "Should return WIFI_DEV from priority list"
+    cleanup
+}
+
+# ============================================================================
+# Test: Default fallback values
+# ============================================================================
+
+test_default_eth_dev_fallback() {
+    test_start "default_eth_dev_fallback"
+    setup
+    unset ETH_DEV
+    export INTERFACE_PRIORITY=""
+
+    source_switcher
+
+    # Script has default fallback: ETH_DEV="${ETH_DEV:-en5}"
+    eth_dev=$(get_eth_dev)
+    assert_equals "en5" "$eth_dev" "Should fallback to default en5 when ETH_DEV unset"
+    cleanup
+}
+
+test_default_wifi_dev_fallback() {
+    test_start "default_wifi_dev_fallback"
+    setup
+    unset WIFI_DEV
+    export INTERFACE_PRIORITY=""
+
+    source_switcher
+
+    # Script has default fallback: WIFI_DEV="${WIFI_DEV:-en0}"
+    wifi_dev=$(get_wifi_dev)
+    assert_equals "en0" "$wifi_dev" "Should fallback to default en0 when WIFI_DEV unset"
+    cleanup
+}
+
+# ============================================================================
+# Run all tests
+# ============================================================================
+
+echo "============================================"
+echo "macOS Multi-Interface Real Unit Tests"
+echo "============================================"
+echo "Testing ACTUAL interface selection from src/macos/switcher.sh"
+echo ""
+
+test_get_eth_dev_returns_configured
+test_get_eth_dev_different_device
+test_get_wifi_dev_returns_configured
+test_get_wifi_dev_different_device
+test_interface_priority_selects_first_available
+test_interface_priority_skips_unavailable
+test_interface_priority_skips_wifi_device
+test_interface_priority_wifi_selection
+test_default_eth_dev_fallback
+test_default_wifi_dev_fallback
+
 test_summary

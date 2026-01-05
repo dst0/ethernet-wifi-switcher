@@ -562,15 +562,58 @@ install() {
         fi
         echo ""
 
-        ETH_PROMPT=${AUTO_ETH:-"Not set"}
-        printf "Enter Ethernet interface [%s]: " "$ETH_PROMPT"
-        read -r input_eth
-        ETH_DEV=${input_eth:-$AUTO_ETH}
+        echo "Interface Order Configuration:"
+        echo "  Specify which network interfaces to use and their priority."
+        echo "  Interfaces are listed in order of preference (comma-separated)."
+        echo "  The switcher will use the first available interface of each type."
+        echo ""
+        echo "  Examples:"
+        echo "    ${AUTO_ETH:-eth0},${AUTO_WIFI:-wlan0}  - Prefer ethernet, fallback to WiFi"
+        echo "    eth0,eth1,wlan0                        - Use specific interfaces in order"
+        echo ""
+        DEFAULT_PRIORITY=""
+        if [ -n "$AUTO_ETH" ] && [ -n "$AUTO_WIFI" ]; then
+            DEFAULT_PRIORITY="${AUTO_ETH},${AUTO_WIFI}"
+        elif [ -n "$AUTO_ETH" ]; then
+            DEFAULT_PRIORITY="${AUTO_ETH}"
+        elif [ -n "$AUTO_WIFI" ]; then
+            DEFAULT_PRIORITY="${AUTO_WIFI}"
+        fi
+        [ -n "${INTERFACE_PRIORITY:-}" ] && DEFAULT_PRIORITY="$INTERFACE_PRIORITY"
 
-        WIFI_PROMPT=${AUTO_WIFI:-"Not set"}
-        printf "Enter Wi-Fi interface [%s]: " "$WIFI_PROMPT"
-        read -r input_wifi
-        WIFI_DEV=${input_wifi:-$AUTO_WIFI}
+        printf "Enter interface priority order [%s]: " "${DEFAULT_PRIORITY:-not set}"
+        read -r input_interface_priority
+        INTERFACE_PRIORITY="${input_interface_priority:-$DEFAULT_PRIORITY}"
+
+        # Parse first ethernet and wifi from the priority list for backward compatibility
+        if [ -n "$INTERFACE_PRIORITY" ]; then
+            # Extract interfaces from comma-separated list
+            ETH_DEV=""
+            WIFI_DEV=""
+            IFS=','
+            for iface in $INTERFACE_PRIORITY; do
+                iface=$(echo "$iface" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                # Check if this looks like an ethernet interface and we don't have one yet
+                if [ -z "$ETH_DEV" ]; then
+                    # Try to detect if it's ethernet by checking if it's not the wifi interface
+                    if [ "$iface" != "$AUTO_WIFI" ] && [ -n "$iface" ]; then
+                        ETH_DEV="$iface"
+                    fi
+                fi
+                # Check if this looks like wifi
+                if [ -z "$WIFI_DEV" ] && [ "$iface" = "$AUTO_WIFI" ]; then
+                    WIFI_DEV="$iface"
+                fi
+            done
+            unset IFS
+
+            # If we didn't find specific types, use autodetected as fallback
+            ETH_DEV="${ETH_DEV:-$AUTO_ETH}"
+            WIFI_DEV="${WIFI_DEV:-$AUTO_WIFI}"
+        else
+            ETH_DEV="$AUTO_ETH"
+            WIFI_DEV="$AUTO_WIFI"
+        fi
 
         echo ""
         echo "DHCP Timeout Configuration:"
@@ -649,10 +692,10 @@ install() {
             printf "Log every check attempt? (y/N) [logs only state changes by default]: "
             read -r input_log_checks
             if [ "$input_log_checks" = "y" ] || [ "$input_log_checks" = "Y" ]; then
-                LOG_CHECK_ATTEMPTS=1
+                LOG_ALL_CHECKS=1
                 echo "Enabled: Will log every check attempt"
             else
-                LOG_CHECK_ATTEMPTS=0
+                LOG_ALL_CHECKS=0
                 echo "Default: Will log only state changes (failure/recovery)"
             fi
         else
@@ -660,97 +703,53 @@ install() {
             CHECK_INTERVAL=0
             CHECK_METHOD="gateway"
             CHECK_TARGET=""
-            LOG_CHECK_ATTEMPTS=0
+            LOG_ALL_CHECKS=0
             echo "Disabled: Event-driven checks only (no periodic monitoring)"
         fi
 
-        echo ""
-        echo "Multi-Interface Configuration (Optional):"
-        echo "  Configure priority for multiple ethernet or wifi interfaces."
-        echo ""
-        printf "Configure interface priority? (y/N): "
-        read -r input_config_priority
-        if [ "$input_config_priority" = "y" ] || [ "$input_config_priority" = "Y" ]; then
-            echo ""
-            echo "Available interfaces:"
-            if command -v nmcli > /dev/null 2>&1; then
-                nmcli device | grep -E "(ethernet|wifi)" | awk '{printf "  %s (%s)\n", $1, $2}'
-            elif command -v ip > /dev/null 2>&1; then
-                # Show with type detection for ip command
-                ip -brief link show | grep -v "lo" | while read -r iface state mac; do
-                    iface_type="unknown"
-                    if echo "$iface" | grep -qE '^(wlan|wlp)'; then
-                        iface_type="wifi"
-                    elif echo "$iface" | grep -qE '^(eth|enp|eno|ens)'; then
-                        iface_type="ethernet"
-                    elif [ -d "/sys/class/net/$iface/wireless" ]; then
-                        iface_type="wifi"
-                    elif [ -f "/sys/class/net/$iface/type" ]; then
-                        net_type=$(cat "/sys/class/net/$iface/type" 2>/dev/null || echo "0")
-                        if [ "$net_type" = "1" ]; then
-                            iface_type="ethernet"
-                        elif [ "$net_type" = "801" ]; then
-                            iface_type="wifi"
-                        fi
-                    fi
-                    printf "  %s (%s)\n" "$iface" "$iface_type"
-                done
-            else
-                # Fallback to /sys/class/net
-                if [ -d /sys/class/net ]; then
-                    for iface_path in /sys/class/net/*; do
-                        iface=$(basename "$iface_path")
-                        [ "$iface" = "lo" ] && continue
-
-                        iface_type="unknown"
-                        if [ -d "$iface_path/wireless" ]; then
-                            iface_type="wifi"
-                        elif echo "$iface" | grep -qE '^(wlan|wlp)'; then
-                            iface_type="wifi"
-                        elif echo "$iface" | grep -qE '^(eth|enp|eno|ens)'; then
-                            iface_type="ethernet"
-                        fi
-
-                        printf "  %s (%s)\n" "$iface" "$iface_type"
-                    done
-                fi
-            fi
-            echo ""
-            echo "Enter interfaces in priority order (comma-separated, highest first):"
-            echo "Example: eth0,eth1,wlan0"
-            DEFAULT_PRIORITY="${ETH_DEV},${WIFI_DEV}"
-            printf "Interface priority [%s]: " "$DEFAULT_PRIORITY"
-            read -r input_interface_priority
-            INTERFACE_PRIORITY="${input_interface_priority:-$DEFAULT_PRIORITY}"
-            if [ -n "$INTERFACE_PRIORITY" ]; then
-                echo "Priority configured: $INTERFACE_PRIORITY"
-            fi
-        else
-            INTERFACE_PRIORITY=""
-        fi
     elif [ "$USE_DEFAULTS" = "1" ]; then
         echo "Auto-install mode: Using detected interfaces and recommended defaults..."
         ETH_DEV="$AUTO_ETH"
         WIFI_DEV="$AUTO_WIFI"
+        # Build default interface priority from detected interfaces
+        if [ -z "${INTERFACE_PRIORITY:-}" ]; then
+            if [ -n "$AUTO_ETH" ] && [ -n "$AUTO_WIFI" ]; then
+                INTERFACE_PRIORITY="${AUTO_ETH},${AUTO_WIFI}"
+            elif [ -n "$AUTO_ETH" ]; then
+                INTERFACE_PRIORITY="${AUTO_ETH}"
+            elif [ -n "$AUTO_WIFI" ]; then
+                INTERFACE_PRIORITY="${AUTO_WIFI}"
+            fi
+        fi
         TIMEOUT="${TIMEOUT:-7}"
         CHECK_INTERNET="${CHECK_INTERNET:-1}"
         CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
         CHECK_METHOD="${CHECK_METHOD:-ping}"
         CHECK_TARGET="${CHECK_TARGET:-8.8.8.8}"
-        LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
-        INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
+        LOG_ALL_CHECKS="${LOG_ALL_CHECKS:-0}"
         echo "  Ethernet: $ETH_DEV"
         echo "  Wi-Fi: $WIFI_DEV"
+        echo "  Interface Priority: ${INTERFACE_PRIORITY:-none}"
         echo "  Internet monitoring: Enabled (ping to 8.8.8.8 every 30s)"
     else
         ETH_DEV="$AUTO_ETH"
         WIFI_DEV="$AUTO_WIFI"
+        # Build default interface priority from detected interfaces
+        if [ -z "${INTERFACE_PRIORITY:-}" ]; then
+            if [ -n "$AUTO_ETH" ] && [ -n "$AUTO_WIFI" ]; then
+                INTERFACE_PRIORITY="${AUTO_ETH},${AUTO_WIFI}"
+            elif [ -n "$AUTO_ETH" ]; then
+                INTERFACE_PRIORITY="${AUTO_ETH}"
+            elif [ -n "$AUTO_WIFI" ]; then
+                INTERFACE_PRIORITY="${AUTO_WIFI}"
+            fi
+        fi
         TIMEOUT="${TIMEOUT:-7}"
         CHECK_INTERNET="${CHECK_INTERNET:-0}"
         CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
         CHECK_METHOD="${CHECK_METHOD:-gateway}"
         CHECK_TARGET="${CHECK_TARGET:-}"
-        LOG_CHECK_ATTEMPTS="${LOG_CHECK_ATTEMPTS:-0}"
+        LOG_ALL_CHECKS="${LOG_ALL_CHECKS:-0}"
         INTERFACE_PRIORITY="${INTERFACE_PRIORITY:-}"
     fi
 
@@ -772,7 +771,7 @@ install() {
             echo "  Check Target:     $CHECK_TARGET"
         fi
         echo "  Check Interval:   ${CHECK_INTERVAL}s"
-        echo "  Log All Checks:   $LOG_CHECK_ATTEMPTS"
+        echo "  Log All Checks:   $LOG_ALL_CHECKS"
     fi
     if [ -n "$INTERFACE_PRIORITY" ]; then
         echo "  Interface Priority: $INTERFACE_PRIORITY"
@@ -811,7 +810,7 @@ Environment="CHECK_INTERNET=$CHECK_INTERNET"
 Environment="CHECK_INTERVAL=$CHECK_INTERVAL"
 Environment="CHECK_METHOD=$CHECK_METHOD"
 Environment="CHECK_TARGET=$CHECK_TARGET"
-Environment="LOG_CHECK_ATTEMPTS=$LOG_CHECK_ATTEMPTS"
+Environment="LOG_ALL_CHECKS=$LOG_ALL_CHECKS"
 Environment="INTERFACE_PRIORITY=$INTERFACE_PRIORITY"
 Restart=always
 RestartSec=5
@@ -833,22 +832,44 @@ EOF
     echo ""
     echo "The service is now running. Starting in 3 seconds..."
     echo ""
-    echo "Core Behavior:"
-    echo "  • Turns Wi-Fi OFF when Ethernet is connected"
-    echo "  • Turns Wi-Fi ON when Ethernet is disconnected"
-    echo "  • Continues working after OS reboot"
-    echo ""
+
     if [ "$CHECK_INTERNET" = "1" ]; then
-        echo "Internet Monitoring: Enabled"
-        if [ "$CHECK_METHOD" = "gateway" ]; then
-            echo "  • Checks: Gateway connectivity every $CHECK_INTERVAL seconds"
-        elif [ "$CHECK_METHOD" = "ping" ]; then
-            echo "  • Checks: Ping to $CHECK_TARGET every $CHECK_INTERVAL seconds"
-        elif [ "$CHECK_METHOD" = "curl" ]; then
-            echo "  • Checks: HTTP connectivity to $CHECK_TARGET every $CHECK_INTERVAL seconds"
+        # Internet monitoring enabled - explain full behavior
+        echo "How it works:"
+        if [ -n "$INTERFACE_PRIORITY" ]; then
+            echo "  • When primary interface has internet → I'll use it and disable others"
+            echo "  • When primary interface loses internet → I'll switch to next working interface"
+            echo "  • When higher priority interface restores internet → I'll switch back to it"
+            echo "  • Interface priority: $INTERFACE_PRIORITY"
+        else
+            echo "  • When Ethernet connected with internet → I'll disable WiFi"
+            echo "  • When Ethernet connected but no internet → I'll switch to WiFi (automatic failover)"
+            echo "  • When Ethernet disconnected → I'll switch to WiFi"
         fi
+        if [ "$CHECK_METHOD" = "gateway" ]; then
+            echo "  • Validates connectivity by pinging gateway every ${CHECK_INTERVAL}s"
+        elif [ "$CHECK_METHOD" = "ping" ]; then
+            echo "  • Validates connectivity by pinging $CHECK_TARGET every ${CHECK_INTERVAL}s"
+        elif [ "$CHECK_METHOD" = "curl" ]; then
+            echo "  • Validates connectivity via HTTP to $CHECK_TARGET every ${CHECK_INTERVAL}s"
+        fi
+        echo "  • Continues working after OS reboot"
+    else
+        # Internet monitoring disabled - simpler behavior
+        echo "How it works:"
+        if [ -n "$INTERFACE_PRIORITY" ]; then
+            echo "  • I'll use highest priority interface that has an IP address"
+            echo "  • Interface priority: $INTERFACE_PRIORITY"
+        else
+            echo "  • When Ethernet connected (has IP) → I'll disable WiFi"
+            echo "  • When Ethernet disconnected (no IP) → I'll enable WiFi"
+        fi
+        echo "  • Continues working after OS reboot"
         echo ""
+        echo "  ⚠️  Note: Internet connectivity is NOT validated."
+        echo "     If an interface has IP but no internet, it will still be used."
     fi
+    echo ""
     echo "Logging:"
     echo "  View real-time logs:"
     echo "    sudo journalctl -u $SERVICE_NAME -f"

@@ -1,166 +1,290 @@
 #!/bin/sh
+# Real unit tests for macOS interface detection and environment variable handling
+# Tests actual interface detection and config from src/macos/switcher.sh
+#
+# NOTE: Interface detection (ETH_DEV/WIFI_DEV) happens at install time via build script.
+# The switcher uses pre-configured values. These tests verify the configuration works.
+
 set -e
 
-# Load test framework
-. "$(dirname "$0")/../lib/mock.sh"
-. "$(dirname "$0")/../lib/assert.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+. "$SCRIPT_DIR/../lib/assert.sh"
+. "$SCRIPT_DIR/../lib/mock.sh"
+
+# Setup test environment
 setup() {
-    clear_mocks
-    setup_mocks
+    MOCK_DIR="/tmp/macos-iface-env-test-$$"
+    mkdir -p "$MOCK_DIR/bin" "$MOCK_DIR/state"
+    export PATH="$MOCK_DIR/bin:$PATH"
+
+    # Set default devices (as installer would configure)
+    export WIFI_DEV="en0"
+    export ETH_DEV="en5"
+    export STATE_DIR="$MOCK_DIR/state"
+    export STATE_FILE="$STATE_DIR/eth-wifi-state"
+    export LAST_CHECK_STATE_FILE="$STATE_FILE.last_check"
+    export TIMEOUT="2"
+    export CHECK_INTERNET="1"
+    export LOG_ALL_CHECKS="0"
+    export INTERFACE_PRIORITY=""
+    export CHECK_INTERVAL="30"
+    export CHECK_METHOD="gateway"
+    export CHECK_TARGET=""
+    export ETH_CONNECT_TIMEOUT="5"
+    export ETH_CONNECT_RETRIES="1"
+    export ETH_RETRY_INTERVAL="1"
+
+    export NETWORKSETUP="$MOCK_DIR/bin/networksetup"
+    export DATE="date"
+    export IPCONFIG="$MOCK_DIR/bin/ipconfig"
+    export IFCONFIG="$MOCK_DIR/bin/ifconfig"
+
+    rm -f "$STATE_FILE" "$LAST_CHECK_STATE_FILE" 2>/dev/null || true
 }
 
-# Test: Environment variable overrides for WiFi device
-test_wifi_env_override() {
-    test_start "macos_wifi_env_override"
-    setup
-
-    export WIFI_DEV="en1"
-    WIFI="$WIFI_DEV"
-
-    assert_equals "en1" "$WIFI" "Should use WIFI_DEV env var"
+source_switcher() {
+    . "$PROJECT_ROOT/src/macos/switcher.sh"
 }
 
-# Test: Environment variable overrides for Ethernet device
-test_eth_env_override() {
-    test_start "macos_eth_env_override"
-    setup
-
-    export ETH_DEV="en7"
-    ETH="$ETH_DEV"
-
-    assert_equals "en7" "$ETH" "Should use ETH_DEV env var"
+cleanup() {
+    rm -rf "$MOCK_DIR"
 }
 
-# Test: Interface priority list parsing
-test_interface_priority() {
-    test_start "macos_interface_priority"
+# ============================================================================
+# Test: Configured devices are used
+# ============================================================================
+
+test_configured_eth_dev() {
+    test_start "configured_eth_dev"
     setup
+    export ETH_DEV="en5"
 
-    export INTERFACE_PRIORITY="en2,en0,en5"
+    source_switcher
 
-    # Parse priority list
-    first_iface=$(echo "$INTERFACE_PRIORITY" | cut -d',' -f1)
-
-    assert_equals "en2" "$first_iface" "Should extract first interface from priority"
+    eth=$(get_eth_dev)
+    assert_equals "en5" "$eth" "Should use configured ETH_DEV"
+    cleanup
 }
 
-# Test: networksetup command detection (WiFi on)
-test_wifi_power_on_detection() {
-    test_start "macos_wifi_power_on"
+test_configured_wifi_dev() {
+    test_start "configured_wifi_dev"
     setup
+    export WIFI_DEV="en0"
 
-    mock_command networksetup "Wi-Fi Power (en0): On"
+    source_switcher
 
-    result=$(networksetup -getairportpower en0 | grep -q "On" && echo "on" || echo "off")
-
-    assert_equals "on" "$result" "Should detect WiFi is on"
+    wifi=$(get_wifi_dev)
+    assert_equals "en0" "$wifi" "Should use configured WIFI_DEV"
+    cleanup
 }
 
-# Test: networksetup command detection (WiFi off)
-test_wifi_power_off_detection() {
-    test_start "macos_wifi_power_off"
+test_custom_eth_dev() {
+    test_start "custom_eth_dev"
     setup
+    export ETH_DEV="en8"
 
-    mock_command networksetup "Wi-Fi Power (en0): Off"
+    source_switcher
 
-    result=$(networksetup -getairportpower en0 | grep -q "On" && echo "on" || echo "off")
-
-    assert_equals "off" "$result" "Should detect WiFi is off"
+    eth=$(get_eth_dev)
+    assert_equals "en8" "$eth" "Should use custom ETH_DEV=en8"
+    cleanup
 }
 
-# Test: Gateway detection with netstat
-test_gateway_detection() {
-    test_start "macos_gateway_detection"
+# ============================================================================
+# Test: CHECK_METHOD environment variable
+# ============================================================================
+
+test_check_method_gateway() {
+    test_start "check_method_gateway"
     setup
+    export CHECK_METHOD="gateway"
 
-    mock_command netstat "default         192.168.1.1    UGSc    en5"
+    cat > "$MOCK_DIR/bin/netstat" << 'EOF'
+#!/bin/sh
+echo "default            192.168.1.1        UGSc           en5"
+EOF
+    chmod +x "$MOCK_DIR/bin/netstat"
 
-    gateway=$(netstat -nr | grep -E "^default.*en5" | awk '{print $2}' | head -n 1)
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
 
-    assert_equals "192.168.1.1" "$gateway" "Should detect gateway"
-}
+    source_switcher
 
-# Test: Check internet with gateway method (success)
-test_internet_gateway_success() {
-    test_start "macos_internet_gateway_success"
-    setup
-
-    mock_command netstat "default         192.168.1.1    UGSc    en5"
-    mock_command ping ""
-
-    # Simulate ping success
-    if netstat -nr | grep -qE "^default.*en5"; then
+    if check_internet "en5" 1; then
         result="success"
     else
         result="fail"
     fi
 
-    assert_equals "success" "$result" "Gateway check should succeed"
+    assert_equals "success" "$result" "CHECK_METHOD=gateway should work"
+    cleanup
 }
 
-# Test: Internet check without gateway (fail)
-test_internet_no_gateway_fail() {
-    test_start "macos_internet_no_gateway"
+test_check_method_ping() {
+    test_start "check_method_ping"
     setup
+    export CHECK_METHOD="ping"
+    export CHECK_TARGET="1.1.1.1"
 
-    mock_command netstat "destination     gateway        flags     interface"
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
 
-    if netstat -nr | grep -qE "^default.*en5"; then
+    source_switcher
+
+    if check_internet "en5" 1; then
         result="success"
     else
         result="fail"
     fi
 
-    assert_equals "fail" "$result" "Should fail without gateway"
+    assert_equals "success" "$result" "CHECK_METHOD=ping should work"
+    cleanup
 }
 
-# Test: Ping check requires target
-test_ping_requires_target() {
-    test_start "macos_ping_requires_target"
+test_check_method_curl() {
+    test_start "check_method_curl"
     setup
+    export CHECK_METHOD="curl"
+    export CHECK_TARGET="http://example.com"
 
-    CHECK_TARGET=""
+    cat > "$MOCK_DIR/bin/curl" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/curl"
 
-    if [ -z "$CHECK_TARGET" ]; then
-        result="missing_target"
+    source_switcher
+
+    if check_internet "en5" 1; then
+        result="success"
     else
-        result="has_target"
+        result="fail"
     fi
 
-    assert_equals "missing_target" "$result" "Ping should require CHECK_TARGET"
+    assert_equals "success" "$result" "CHECK_METHOD=curl should work"
+    cleanup
 }
 
-# Test: Curl check uses default URL
-test_curl_default_url() {
-    test_start "macos_curl_default_url"
+# ============================================================================
+# Test: STATE_DIR environment variable
+# ============================================================================
+
+test_state_dir_custom_path() {
+    test_start "state_dir_custom_path"
+    setup
+    CUSTOM_STATE_DIR="$MOCK_DIR/custom/state/path"
+    mkdir -p "$CUSTOM_STATE_DIR"
+    export STATE_DIR="$CUSTOM_STATE_DIR"
+    export STATE_FILE="$STATE_DIR/eth-wifi-state"
+
+    source_switcher
+
+    write_state "TEST_STATE"
+
+    assert_true "[ -d '$CUSTOM_STATE_DIR' ]" "Custom STATE_DIR should exist"
+    assert_true "[ -f '$STATE_FILE' ]" "State file should be in custom dir"
+
+    content=$(cat "$STATE_FILE")
+    assert_equals "TEST_STATE" "$content" "State should be written to custom path"
+    cleanup
+}
+
+# ============================================================================
+# Test: CHECK_INTERNET environment variable
+# ============================================================================
+
+test_check_internet_setting() {
+    test_start "check_internet_setting"
+    setup
+    export CHECK_INTERNET="1"
+
+    cat > "$MOCK_DIR/bin/netstat" << 'EOF'
+#!/bin/sh
+echo "default            192.168.1.1        UGSc           en5"
+EOF
+    chmod +x "$MOCK_DIR/bin/netstat"
+
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
+
+    source_switcher
+
+    if check_internet "en5" 1; then
+        result="success"
+    else
+        result="fail"
+    fi
+
+    assert_equals "success" "$result" "CHECK_INTERNET=1 should enable checks"
+    cleanup
+}
+
+# ============================================================================
+# Test: TIMEOUT environment variable affects behavior
+# ============================================================================
+
+test_timeout_setting() {
+    test_start "timeout_setting"
+    setup
+    export TIMEOUT="5"
+
+    source_switcher
+
+    # Verify TIMEOUT is set correctly after sourcing
+    assert_equals "5" "$TIMEOUT" "TIMEOUT should be set to 5"
+    cleanup
+}
+
+# ============================================================================
+# Test: Default values
+# ============================================================================
+
+test_default_values_applied() {
+    test_start "default_values_applied"
     setup
 
-    CHECK_TARGET=""
-    DEFAULT_URL="http://captive.apple.com/hotspot-detect.html"
+    # Unset to test defaults
+    unset ETH_DEV
+    unset WIFI_DEV
 
-    url="${CHECK_TARGET:-$DEFAULT_URL}"
+    source_switcher
 
-    assert_equals "$DEFAULT_URL" "$url" "Should use default URL when CHECK_TARGET empty"
+    # Script has defaults: ETH_DEV="${ETH_DEV:-en5}" and WIFI_DEV="${WIFI_DEV:-en0}"
+    assert_equals "en5" "$ETH_DEV" "Default ETH_DEV should be en5"
+    assert_equals "en0" "$WIFI_DEV" "Default WIFI_DEV should be en0"
+    cleanup
 }
 
-# Run tests
-echo "Running macOS Interface & Internet Tests"
-echo "========================================"
+# ============================================================================
+# Run all tests
+# ============================================================================
 
-test_wifi_env_override
-test_eth_env_override
-test_interface_priority
-test_wifi_power_on_detection
-test_wifi_power_off_detection
-test_gateway_detection
-test_internet_gateway_success
-test_internet_no_gateway_fail
-test_ping_requires_target
-test_curl_default_url
+echo "============================================"
+echo "macOS Interface and Environment Real Unit Tests"
+echo "============================================"
+echo "Testing ACTUAL interface config and env vars from src/macos/switcher.sh"
+echo ""
 
-# Cleanup
-teardown_mocks
+test_configured_eth_dev
+test_configured_wifi_dev
+test_custom_eth_dev
+test_check_method_gateway
+test_check_method_ping
+test_check_method_curl
+test_state_dir_custom_path
+test_check_internet_setting
+test_timeout_setting
+test_default_values_applied
 
-# Summary
 test_summary

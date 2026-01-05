@@ -1,114 +1,338 @@
 #!/bin/sh
-# macOS-specific internet failover tests
-# Tests priority-based switching and internet failure recovery
-# Note: Not using set -e to allow testing failure cases
+# Real unit tests for macOS internet failover functionality
+# Tests actual failover logic from src/macos/switcher.sh
 
-# Load test framework
-. "$(dirname "$0")/../lib/assert.sh"
+set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+. "$SCRIPT_DIR/../lib/assert.sh"
+. "$SCRIPT_DIR/../lib/mock.sh"
+
+# Setup test environment
 setup() {
-    :
+    MOCK_DIR="/tmp/macos-failover-test-$$"
+    mkdir -p "$MOCK_DIR/bin" "$MOCK_DIR/state"
+    export PATH="$MOCK_DIR/bin:$PATH"
+
+    export WIFI_DEV="en0"
+    export ETH_DEV="en5"
+    export STATE_DIR="$MOCK_DIR/state"
+    export STATE_FILE="$STATE_DIR/eth-wifi-state"
+    export LAST_CHECK_STATE_FILE="$STATE_FILE.last_check"
+    export TIMEOUT="2"
+    export CHECK_INTERNET="1"
+    export LOG_ALL_CHECKS="0"
+    export INTERFACE_PRIORITY=""
+    export CHECK_INTERVAL="30"
+    export CHECK_METHOD="gateway"
+    export CHECK_TARGET=""
+    export ETH_CONNECT_TIMEOUT="5"
+    export ETH_CONNECT_RETRIES="1"
+    export ETH_RETRY_INTERVAL="1"
+
+    export NETWORKSETUP="$MOCK_DIR/bin/networksetup"
+    export DATE="date"
+    export IPCONFIG="$MOCK_DIR/bin/ipconfig"
+    export IFCONFIG="$MOCK_DIR/bin/ifconfig"
+
+    rm -f "$STATE_FILE" "$LAST_CHECK_STATE_FILE" 2>/dev/null || true
 }
 
-# Test: Ethernet has priority and is connected
-test_priority_eth_connected() {
-    test_start "priority_eth_connected"
+source_switcher() {
+    . "$PROJECT_ROOT/src/macos/switcher.sh"
+}
+
+cleanup() {
+    rm -rf "$MOCK_DIR"
+}
+
+# ============================================================================
+# Test: Ethernet has internet - should disable WiFi
+# ============================================================================
+
+test_eth_has_internet_disables_wifi() {
+    test_start "eth_has_internet_disables_wifi"
     setup
 
+    # Mock eth with link, IP, and internet
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "en5" ]; then
+    echo "en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500"
+    echo "\tstatus: active"
+    echo "\tinet 192.168.1.100 netmask 0xffffff00 broadcast 192.168.1.255"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+# Active eth has IP, wifi has none
+if [ "$1" = "getifaddr" ] && [ "$2" = "en5" ]; then
+  echo "192.168.1.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    cat > "$MOCK_DIR/bin/netstat" << 'EOF'
+#!/bin/sh
+echo "default            192.168.1.1        UGSc           en5"
+EOF
+    chmod +x "$MOCK_DIR/bin/netstat"
+
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
+
+    # Track WiFi power changes
+    cat > "$MOCK_DIR/bin/networksetup" << EOF
+#!/bin/sh
+if [ "\$1" = "-getairportpower" ]; then
+    echo "Wi-Fi Power (en0): On"
+elif [ "\$1" = "-setairportpower" ]; then
+    echo "\$3" > "$MOCK_DIR/wifi_action"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/networksetup"
+
+    source_switcher
+
+    # Run the REAL orchestration
+    switcher_tick
+
+    action=$(cat "$MOCK_DIR/wifi_action" 2>/dev/null || echo "none")
+
+    # In internet-check mode, eth having internet should result in WiFi being turned off
+    assert_equals "off" "$action" "WiFi should be turned off when eth has internet"
+    cleanup
+}
+
+# ============================================================================
+# Test: Ethernet loses internet - should enable WiFi
+# ============================================================================
+
+test_eth_loses_internet_enables_wifi() {
+    test_start "eth_loses_internet_enables_wifi"
+    setup
+
+    # Ensure previous state is ethernet connected (state file uses connected/disconnected)
+    mkdir -p "$STATE_DIR"
+    echo "connected" > "$STATE_FILE"
+    echo "success" > "$LAST_CHECK_STATE_FILE"
+
+    # eth has link + IP
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "en5" ]; then
+    echo "en5: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500"
+    echo "\tstatus: active"
+    echo "\tinet 192.168.1.100 netmask 0xffffff00"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
+
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "getifaddr" ] && [ "$2" = "en5" ]; then
+  echo "192.168.1.100"
+elif [ "$1" = "getifaddr" ] && [ "$2" = "en0" ]; then
+  echo "192.168.2.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
+
+    cat > "$MOCK_DIR/bin/netstat" << 'EOF'
+#!/bin/sh
+echo "default            192.168.1.1        UGSc           en5"
+EOF
+    chmod +x "$MOCK_DIR/bin/netstat"
+
+    # Active gateway ping fails
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 1
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
+
+    # For inactive interface checks, script uses curl. Make WiFi succeed.
+    cat > "$MOCK_DIR/bin/curl" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/curl"
+
+    # Track WiFi power changes
+    cat > "$MOCK_DIR/bin/networksetup" << EOF
+#!/bin/sh
+if [ "\$1" = "-getairportpower" ]; then
+    echo "Wi-Fi Power (en0): Off"
+elif [ "\$1" = "-setairportpower" ]; then
+    echo "\$3" > "$MOCK_DIR/wifi_action"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/networksetup"
+
+    # Prefer eth then wifi
     export INTERFACE_PRIORITY="en5,en0"
-    active_iface="en5"
-    active_has_internet="yes"
 
-    assert_equals "en5" "$active_iface" "Should use ethernet (en5) as it has higher priority"
+    source_switcher
+
+    # Run REAL orchestration
+    switcher_tick
+
+    action=$(cat "$MOCK_DIR/wifi_action" 2>/dev/null || echo "none")
+
+    # Eth has no internet; should fall back to WiFi and turn it on
+    assert_equals "on" "$action" "WiFi should be turned on when eth loses internet"
+    cleanup
 }
 
-# Test: Ethernet loses internet, fallback to WiFi
-test_eth_loses_internet_fallback_wifi() {
-    test_start "eth_loses_internet_fallback_wifi"
+# ============================================================================
+# Test: Ethernet disconnected - should enable WiFi
+# ============================================================================
+
+test_eth_disconnected_enables_wifi() {
+    test_start "eth_disconnected_enables_wifi"
     setup
 
-    export INTERFACE_PRIORITY="en5,en0"
+    # eth no link + no IP
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "en5" ]; then
+    echo "en5: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500"
+    echo "\tstatus: inactive"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
 
-    # Simulate: eth (en5) loses internet
-    primary_iface="en5"
-    primary_has_internet="no"
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+# WiFi has IP so it can become active
+if [ "$1" = "getifaddr" ] && [ "$2" = "en0" ]; then
+  echo "192.168.2.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
 
-    # Should fallback to secondary (en0 for wifi)
-    fallback_iface="en0"
-    fallback_has_internet="yes"
+    # Track WiFi power changes
+    cat > "$MOCK_DIR/bin/networksetup" << EOF
+#!/bin/sh
+if [ "\$1" = "-getairportpower" ]; then
+    echo "Wi-Fi Power (en0): Off"
+elif [ "\$1" = "-setairportpower" ]; then
+    echo "\$3" > "$MOCK_DIR/wifi_action"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/networksetup"
 
-    assert_equals "no" "$primary_has_internet" "Primary ethernet should have no internet"
-    assert_equals "yes" "$fallback_has_internet" "Secondary wifi should have internet"
-    assert_equals "en0" "$fallback_iface" "Should switch to wifi (en0)"
+    source_switcher
+
+    # Run REAL orchestration (in non-internet mode, disconnect should enable wifi)
+    export CHECK_INTERNET="0"
+    echo "connected" > "$STATE_FILE"
+    switcher_tick
+
+    action=$(cat "$MOCK_DIR/wifi_action" 2>/dev/null || echo "none")
+    assert_equals "on" "$action" "WiFi should be turned on when eth disconnected"
+    cleanup
 }
 
-# Test: Higher priority interface recovers
-test_higher_priority_recovery() {
-    test_start "higher_priority_recovery"
+# ============================================================================
+# Test: WiFi failover has internet - no action
+# ============================================================================
+
+test_wifi_failover_has_internet_no_action() {
+    test_start "wifi_failover_has_internet_no_action"
     setup
 
-    export INTERFACE_PRIORITY="en5,en0"
+    # Setup: WiFi is on with IP and internet; eth has no link.
+    echo "disconnected" > "$STATE_FILE"
 
-    # State: Currently using en0 (wifi)
-    current_iface="en0"
+    cat > "$MOCK_DIR/bin/ifconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "en5" ]; then
+  echo "en5: flags=8822<BROADCAST,SMART,SIMPLEX,MULTICAST> mtu 1500"
+  echo "\tstatus: inactive"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ifconfig"
 
-    # But en5 (ethernet) just recovered
-    primary_iface="en5"
-    primary_has_internet="yes"
+    cat > "$MOCK_DIR/bin/ipconfig" << 'EOF'
+#!/bin/sh
+if [ "$1" = "getifaddr" ] && [ "$2" = "en0" ]; then
+  echo "192.168.2.100"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/ipconfig"
 
-    assert_equals "en5" "$primary_iface" "Primary should be checked and found working"
+    cat > "$MOCK_DIR/bin/ping" << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$MOCK_DIR/bin/ping"
+
+    # Any wifi power change should be considered unexpected
+    cat > "$MOCK_DIR/bin/networksetup" << EOF
+#!/bin/sh
+if [ "\$1" = "-getairportpower" ]; then
+    echo "Wi-Fi Power (en0): On"
+elif [ "\$1" = "-setairportpower" ]; then
+    echo "UNEXPECTED" > "$MOCK_DIR/wifi_action"
+fi
+EOF
+    chmod +x "$MOCK_DIR/bin/networksetup"
+
+    source_switcher
+
+    export CHECK_INTERNET="0"
+    switcher_tick
+
+    action=$(cat "$MOCK_DIR/wifi_action" 2>/dev/null || echo "none")
+    assert_equals "none" "$action" "WiFi should not be toggled when it is already the active working interface"
+    cleanup
 }
 
-# Test: Multiple ethernet interfaces - select by priority
-test_multi_interface_selection() {
-    test_start "multi_interface_selection"
+# ============================================================================
+# Test: read_last_state and write_state for failover tracking
+# ============================================================================
+
+test_failover_state_tracking() {
+    test_start "failover_state_tracking"
     setup
 
-    export INTERFACE_PRIORITY="en5,en8,en0"
+    source_switcher
 
-    # en5 is not connected, en8 is available
-    en5_connected="no"
-    en8_connected="yes"
-    en8_has_internet="yes"
+    # Write ETH_ACTIVE state
+    write_state "ETH_ACTIVE"
+    eth_state=$(read_last_state)
+    assert_equals "ETH_ACTIVE" "$eth_state" "Should read ETH_ACTIVE"
 
-    assert_equals "yes" "$en8_has_internet" "Should select en8 when en5 unavailable"
+    # Write WIFI_FAILOVER state
+    write_state "WIFI_FAILOVER"
+    wifi_state=$(read_last_state)
+    assert_equals "WIFI_FAILOVER" "$wifi_state" "Should read WIFI_FAILOVER"
+
+    cleanup
 }
 
-# Test: No interface has internet
-test_no_internet_switch_candidate() {
-    test_start "no_internet_switch_candidate"
-    setup
-
-    export INTERFACE_PRIORITY="en5,en0"
-
-    en5_has_internet="no"
-    en0_has_internet="no"
-
-    assert_equals "no" "$en5_has_internet" "Ethernet should have no internet"
-    assert_equals "no" "$en0_has_internet" "WiFi should also have no internet"
-}
-
-# Test: Both interfaces have no internet
-test_both_interfaces_no_internet() {
-    test_start "both_interfaces_no_internet"
-    setup
-
-    export INTERFACE_PRIORITY="en5,en0"
-
-    primary_internet="no"
-    secondary_internet="no"
-
-    assert_equals "no" "$primary_internet" "Primary has no internet"
-    assert_equals "no" "$secondary_internet" "Secondary has no internet"
-}
-
+# ============================================================================
 # Run all tests
-test_priority_eth_connected
-test_eth_loses_internet_fallback_wifi
-test_higher_priority_recovery
-test_multi_interface_selection
-test_no_internet_switch_candidate
-test_both_interfaces_no_internet
+# ============================================================================
 
-# Print summary
+echo "============================================"
+echo "macOS Internet Failover Real Unit Tests"
+echo "============================================"
+echo "Testing ACTUAL failover logic from src/macos/switcher.sh"
+echo ""
+
+test_eth_has_internet_disables_wifi
+test_eth_loses_internet_enables_wifi
+test_eth_disconnected_enables_wifi
+test_wifi_failover_has_internet_no_action
+test_failover_state_tracking
+
 test_summary
