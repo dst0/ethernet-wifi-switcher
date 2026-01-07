@@ -167,6 +167,39 @@ For this tool to work seamlessly, ensure that at least one of your Wi-Fi network
 
 If no network is set to auto-connect, the Wi-Fi interface will turn on but will not establish a connection until you manually select a network.
 
+## 🧪 Testing & Development Tools
+
+### macOS Network Interface Tester
+
+A comprehensive testing toolkit for investigating macOS network behavior in real-world scenarios. This tool helps:
+- Understand how macOS handles interface switching
+- Measure timing of network state changes
+- Test various detection methods for reliability
+- Gather empirical data before making code changes
+
+**Quick Start:**
+```bash
+# Run comprehensive automated tests
+sudo bash macos-network-tester.sh
+
+# View results
+cat ~/.macos-network-tester/latest-summary.txt
+```
+
+**Documentation:**
+- 📘 [Complete Testing Guide](./NETWORK-TESTING-GUIDE.md) - Comprehensive methodology and analysis
+- 📋 [Quick Reference](./QUICK-REFERENCE.md) - Essential commands and one-liners
+- 📖 [Tester README](./README-TESTER.md) - Overview and use cases
+
+**Why use it:**
+- Before installing: Find your interface names and test timing
+- Troubleshooting: Diagnose connection issues
+- Development: Gather baseline data before making changes
+- Documentation: Understand system-specific behaviors
+
+The tester runs 9 categories of tests (40+ scenarios) and provides recommendations based on your specific hardware and network configuration.
+
+---
 
 No signing issues, but the installer requires `sudo` to create the `systemd` service and copy files to `/opt/eth-wifi-auto`.
 
