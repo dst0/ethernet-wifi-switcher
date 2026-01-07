@@ -10,6 +10,17 @@ dist/
 install.sh
 ethwifiauto-watch-*
 
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# TypeScript
+*.tsbuildinfo
+coverage/
+
 # Logs (if any are created locally)
 *.log
 *.err
