@@ -48,16 +48,72 @@ eth_is_up(){
   [ -n "$ip" ]
 }
 
-eth_is_up_with_retry(){
+get_gateway(){
+  dev="$1"
+  # Try to get gateway from netstat for the specific interface
+  gw=$(netstat -rn -f inet | grep -i "default" | grep "$dev" | awk '{print $2}' | head -n 1)
+  if [ -z "$gw" ]; then
+    # Fallback: if we have an IP, assume .1 on the same subnet
+    ip="$($IPCONFIG getifaddr "$dev" 2>/dev/null || true)"
+    if [ -n "$ip" ]; then
+      gw=$(echo "$ip" | cut -d. -f1-3).1
+    fi
+  fi
+  echo "$gw"
+}
+
+eth_has_internet(){
+  if ! eth_is_up; then
+    return 1
+  fi
+
+  gw=$(get_gateway "$ETH_DEV")
+  if [ -z "$gw" ]; then
+    log "could not determine gateway for $ETH_DEV"
+    return 1
+  fi
+
+  # Canary host (Cloudflare DNS)
+  canary="1.1.1.1"
+
+  # Add a specific route to canary via Ethernet gateway
+  # We use -host to only affect this specific IP
+  if ! route add -host "$canary" "$gw" >/dev/null 2>&1; then
+    # If adding route fails, it might already exist or gateway is unreachable
+    # We try to delete and re-add just in case
+    route delete -host "$canary" >/dev/null 2>&1 || true
+    if ! route add -host "$canary" "$gw" >/dev/null 2>&1; then
+      log "failed to add canary route to $canary via $gw"
+      return 1
+    fi
+  fi
+
+  # Test connectivity
+  has_internet=1
+  # -c 2: 2 packets, -W 2000: 2000ms timeout
+  # We use || true to ensure set -e doesn't trip if ping fails
+  if ping -c 2 -W 2000 "$canary" >/dev/null 2>&1; then
+    has_internet=0
+  fi
+
+  # Cleanup route
+  route delete -host "$canary" >/dev/null 2>&1 || true
+
+  return $has_internet
+}
+
+eth_is_functional_with_retry(){
   # Try immediate check
-  if eth_is_up; then
+  if eth_has_internet; then
     return 0
   fi
 
-  # Check if interface has link but no IP yet
-  if eth_has_link; then
-    log "eth interface active but no IP yet, waiting..."
+  # If eth has no link at all, don't bother retrying much
+  if ! eth_has_link; then
+    return 1
   fi
+
+  log "eth has no internet, waiting for connection..."
 
   # Poll every second until timeout
   elapsed=0
@@ -65,8 +121,8 @@ eth_is_up_with_retry(){
     sleep 1
     elapsed=$((elapsed + 1))
 
-    if eth_is_up; then
-      log "eth acquired IP after ${elapsed}s"
+    if eth_has_internet; then
+      log "eth acquired internet after ${elapsed}s"
       return 0
     fi
   done
@@ -77,28 +133,20 @@ eth_is_up_with_retry(){
 main(){
   last_state=$(read_last_state)
 
-  # Quick check without retry
-  if eth_is_up; then
+  # Check if ethernet is functional (has internet)
+  if eth_has_internet; then
     current_state="connected"
   else
     current_state="disconnected"
   fi
 
-  # If state changed from connected to disconnected, enable wifi immediately
-  if [ "$last_state" = "connected" ] && [ "$current_state" = "disconnected" ]; then
-    log "eth disconnected, enabling wifi immediately"
-    write_state "disconnected"
-    if ! wifi_is_on; then
-      set_wifi on
-    fi
-    return
-  fi
-
-  # If currently disconnected, use retry logic to wait for IP
-  if [ "$last_state" = "disconnected" ] && [ "$current_state" = "disconnected" ]; then
-    # Try with retry for new connection
-    if eth_is_up_with_retry; then
-      current_state="connected"
+  # If state changed from connected to disconnected, or if we are currently disconnected,
+  # try a more thorough check with retries if ethernet seems to be present but not yet functional.
+  if [ "$current_state" = "disconnected" ]; then
+    if [ "$last_state" = "connected" ] || eth_has_link; then
+       if eth_is_functional_with_retry; then
+         current_state="connected"
+       fi
     fi
   fi
 

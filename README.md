@@ -97,6 +97,7 @@ This application is designed to optimize energy efficiency and minimize the user
   - **Linux**: Uses `nmcli monitor` (NetworkManager).
   - **Windows**: Uses `CIM Indication Events` (PowerShell).
 - **Intelligent Interface Detection**: Automatically identifies and prioritizes network interfaces with active IP addresses.
+- **Smart Connectivity Validation (macOS)**: Uses a non-disruptive canary route method to verify actual internet access on Ethernet before disabling Wi-Fi, preventing loss of connectivity if Ethernet has an IP but no gateway to the internet.
 - **Smart State Tracking**: Persistent state management enables instant Wi-Fi activation on disconnect and retry logic only when connecting.
 - **Configurable Timeout**: Adjustable IP acquisition timeout (default 7s) via `TIMEOUT` environment variable for slow routers.
 - **Universal Linux Support**: Fallback detection using `nmcli` → `ip` command → `/sys/class/net` for maximum compatibility.
