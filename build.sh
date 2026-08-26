@@ -12,6 +12,15 @@ PLATFORM=${1:-all}
 
 echo "🚀 Starting build (Platform: $PLATFORM)..."
 
+# 0. TypeScript Core (always build)
+echo "📦 Building TypeScript core..."
+if command -v npm >/dev/null 2>&1; then
+    npm run build
+    echo "✅ TypeScript core built successfully"
+else
+    echo "⚠️ npm not found - skipping TypeScript build (required for production)"
+fi
+
 # 1. macOS
 if [ "$PLATFORM" = "all" ] || [ "$PLATFORM" = "macos" ]; then
     if [ -f "src/macos/build-macos.sh" ]; then

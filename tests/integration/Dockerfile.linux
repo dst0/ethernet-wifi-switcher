@@ -1,0 +1,27 @@
+FROM ubuntu:22.04
+
+# Install required packages
+RUN apt-get update && apt-get install -y \
+    network-manager \
+    iproute2 \
+    iputils-ping \
+    curl \
+    systemd \
+    sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create test user
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Copy test files
+WORKDIR /test
+COPY dist/install-linux.sh /test/
+
+# Note: /sys is read-only in Docker, so we'll use environment variables
+# to override interface detection in the test script
+
+# Run tests as testuser
+USER testuser
+
+CMD ["/bin/bash"]
