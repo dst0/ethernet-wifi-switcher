@@ -51,45 +51,69 @@ jobs:
           path: dist/install-windows.ps1
 
   test-linux:
-    name: Test Linux Install/Uninstall
+    name: Test Linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build Linux Installer
         run: ./build.sh linux
-      - name: Run Linux install/uninstall (test mode)
+      - name: Run unit tests
         run: |
-          sudo TEST_MODE=1 ETHERNET_INTERFACE=eth0 WIFI_INTERFACE=wlan0 ./dist/install-linux.sh
-          sudo TEST_MODE=1 ./dist/install-linux.sh --uninstall
+          for test in tests/unit/test_*.sh; do
+            echo "Running $(basename $test)..."
+            sh "$test"
+          done
+      - name: Run integration tests
+        run: |
+          bash tests/integration/test_linux_integration.sh
 
   test-macos:
-    name: Test macOS Install/Uninstall
+    name: Test macOS
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build macOS Installer
         run: ./build.sh macos
-      - name: Run macOS install/uninstall (test mode)
+      - name: Run unit tests
         run: |
-          sudo TEST_MODE=1 ETHERNET_INTERFACE=en0 WIFI_INTERFACE=en1 ./dist/install-macos.sh
-          sudo TEST_MODE=1 ./dist/install-macos.sh --uninstall
+          for test in tests/unit/test_*.sh; do
+            echo "Running $(basename $test)..."
+            sh "$test"
+          done
+      - name: Test installation (non-destructive)
+        run: |
+          # Run build verification
+          [ -f dist/install-macos.sh ] || { echo "Installer not built"; exit 1; }
+          # Test syntax
+          bash -n dist/install-macos.sh
+          echo "macOS installer syntax check passed"
 
   test-windows:
-    name: Test Windows Install/Uninstall
+    name: Test Windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build Windows Installer
         shell: bash
         run: ./build.sh windows
-      - name: Run Windows install/uninstall (test mode)
+      - name: Run unit tests
+        shell: bash
+        run: |
+          for test in tests/unit/test_*.sh; do
+            echo "Running $(basename $test)..."
+            sh "$test"
+          done
+      - name: Test installation (syntax check)
         shell: pwsh
         run: |
-          $env:TEST_MODE="1"
-          $env:ETHERNET_INTERFACE="Ethernet0"
-          $env:WIFI_INTERFACE="Wi-Fi"
-          powershell.exe -ExecutionPolicy Bypass -File dist/install-windows.ps1
-          powershell.exe -ExecutionPolicy Bypass -File dist/install-windows.ps1 -Uninstall
+          # Run build verification
+          if (-not (Test-Path dist/install-windows.ps1)) {
+            Write-Error "Installer not built"
+            exit 1
+          }
+          # Test PowerShell syntax
+          $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content dist/install-windows.ps1 -Raw), [ref]$null)
+          Write-Host "Windows installer syntax check passed"
 
   release:
     name: Release

@@ -19,7 +19,11 @@ echo "Removing system files..."
 sudo rm -f "$SYS_PLIST_PATH" "$SYS_HELPER_PATH" "$SYS_WATCHER_BIN"
 
 echo "Removing workspace..."
-sudo rm -rf "$WORKDIR"
+if [ -n "$WORKDIR" ] && [ "$WORKDIR" != "--uninstall" ]; then
+  sudo rm -rf "$WORKDIR"
+else
+  echo "Warning: WORKDIR not set or invalid, skipping workspace removal"
+fi
 
 echo "✅ Uninstalled completely."
 echo ""

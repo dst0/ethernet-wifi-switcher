@@ -5,6 +5,27 @@ set -eu
 # Eth/Wi-Fi Auto Switcher (macOS Installer Template)
 # =========================================================
 
+# Parse command line flags
+USE_DEFAULTS=0
+WORKDIR=""
+for arg in "$@"; do
+    case "$arg" in
+        --auto|--defaults)
+            USE_DEFAULTS=1
+            AUTO_INSTALL_DEPS=1
+            ;;
+        --uninstall)
+            # Handled at end of script - skips main() and calls uninstall()
+            ;;
+        *)
+            # Assume it's the workdir
+            if [ -z "$WORKDIR" ] && [ "$arg" != "--auto" ] && [ "$arg" != "--defaults" ]; then
+                WORKDIR="$arg"
+            fi
+            ;;
+    esac
+done
+
 DAEMON_LABEL="com.ethwifiauto.watch"
 
 # System install paths
@@ -13,14 +34,15 @@ SYS_WATCHER_BIN="/usr/local/sbin/ethwifiauto-watch"
 SYS_PLIST_PATH="/Library/LaunchDaemons/${DAEMON_LABEL}.plist"
 
 DEFAULT_WORKDIR="${HOME}/.ethernet-wifi-auto-switcher"
-WORKDIR="${1:-}"
 IS_TEST="${TEST_MODE:-0}"
 
-# If no workdir provided and interactive, ask user
-if [ -z "$WORKDIR" ] && [ -t 0 ]; then
+# If no workdir provided and interactive, ask user (but not during uninstall)
+if [ -z "$WORKDIR" ] && [ -t 0 ] && [ "$USE_DEFAULTS" = "0" ] && [ "${1:-}" != "--uninstall" ]; then
   printf "Enter installation directory [%s]: " "$DEFAULT_WORKDIR"
   read -r input_dir
   WORKDIR=${input_dir:-$DEFAULT_WORKDIR}
+elif [ "$USE_DEFAULTS" = "1" ] && [ -z "$WORKDIR" ]; then
+  echo "Using default installation directory: $DEFAULT_WORKDIR"
 fi
 
 WORKDIR="${WORKDIR:-$DEFAULT_WORKDIR}"
@@ -33,6 +55,354 @@ PLIST_CONTENT_B64="__PLIST_TEMPLATE_B64__"
 
 die(){ echo "ERROR: $*" >&2; exit 1; }
 need_macos(){ [ "$(uname -s)" = "Darwin" ] || die "macOS only."; }
+
+check_dependencies() {
+    echo "Checking system dependencies..."
+    echo ""
+
+    HAS_NETWORKSETUP=0
+    HAS_IPCONFIG=0
+    HAS_SWIFT=0
+    HAS_LAUNCHCTL=0
+    HAS_PING=0
+    HAS_CURL=0
+
+    MISSING_CRITICAL=""
+    MISSING_OPTIONAL=""
+
+    # Check for networksetup (should be built-in on macOS)
+    if command -v networksetup >/dev/null 2>&1; then
+        echo "✅ networksetup found"
+        HAS_NETWORKSETUP=1
+    else
+        echo "❌ CRITICAL: networksetup not found!"
+        MISSING_CRITICAL="${MISSING_CRITICAL}networksetup "
+    fi
+
+    # Check for ipconfig (should be built-in)
+    if command -v ipconfig >/dev/null 2>&1; then
+        echo "✅ ipconfig found"
+        HAS_IPCONFIG=1
+    else
+        echo "❌ CRITICAL: ipconfig not found!"
+        MISSING_CRITICAL="${MISSING_CRITICAL}ipconfig "
+    fi
+
+    # Check for Swift (needed to compile the watcher)
+    if command -v swift >/dev/null 2>&1 || command -v swiftc >/dev/null 2>&1; then
+        echo "✅ Swift compiler found"
+        HAS_SWIFT=1
+    else
+        echo "❌ CRITICAL: Swift compiler not found!"
+        MISSING_CRITICAL="${MISSING_CRITICAL}xcode-cli-tools "
+    fi
+
+    # Check for ping (should be built-in)
+    if command -v ping >/dev/null 2>&1; then
+        echo "✅ ping found"
+        HAS_PING=1
+    else
+        echo "⚠️  WARNING: ping not found"
+        MISSING_OPTIONAL="${MISSING_OPTIONAL}ping "
+    fi
+
+    # Check for curl (usually built-in on modern macOS)
+    if command -v curl >/dev/null 2>&1; then
+        echo "✅ curl found - HTTP connectivity checks available"
+        HAS_CURL=1
+    else
+        echo "ℹ️  curl not found (optional - needed for HTTP connectivity checks)"
+    fi
+
+    # Check for launchctl (should be built-in)
+    if command -v launchctl >/dev/null 2>&1; then
+        echo "✅ launchctl found"
+        HAS_LAUNCHCTL=1
+    else
+        echo "❌ CRITICAL: launchctl not found!"
+        MISSING_CRITICAL="${MISSING_CRITICAL}launchctl "
+    fi
+
+    echo ""
+
+    # Handle missing dependencies
+    if [ -n "$MISSING_CRITICAL" ] || [ -n "$MISSING_OPTIONAL" ]; then
+        if [ -n "$MISSING_CRITICAL" ]; then
+            echo "❌ Critical dependencies missing: $MISSING_CRITICAL"
+        fi
+        if [ -n "$MISSING_OPTIONAL" ]; then
+            echo "⚠️  Optional dependencies missing: $MISSING_OPTIONAL"
+        fi
+        echo ""
+
+        if [ -t 0 ]; then
+            # Check if we can install anything
+            CAN_INSTALL=0
+            if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                CAN_INSTALL=1
+            fi
+
+            if [ $CAN_INSTALL -eq 1 ]; then
+                if [ "$USE_DEFAULTS" = "1" ]; then
+                    install_deps="y"
+                    echo "Auto-install mode: Installing dependencies automatically..."
+                else
+                    printf "Would you like to install missing dependencies automatically? (y/N): "
+                    read -r install_deps
+                fi
+
+                if [ "$install_deps" = "y" ] || [ "$install_deps" = "Y" ]; then
+                    echo ""
+                    echo "Installing dependencies..."
+
+                    # Install Xcode Command Line Tools (includes Swift)
+                    if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                        echo ""
+                        echo "Installing Xcode Command Line Tools..."
+                        echo "A dialog will appear. Please click 'Install' and wait for completion."
+                        echo ""
+
+                        # Trigger Xcode CLI tools installation
+                        xcode-select --install 2>/dev/null || true
+
+                        echo ""
+                        echo "⏳ Waiting for Xcode Command Line Tools installation..."
+                        echo "   This may take several minutes. Please complete the installation in the dialog."
+                        echo ""
+                        printf "Press Enter once the installation is complete..."
+                        read -r _wait
+
+                        # Verify Swift is now available
+                        if command -v swift >/dev/null 2>&1 || command -v swiftc >/dev/null 2>&1; then
+                            echo "✅ Swift compiler installed successfully!"
+                            HAS_SWIFT=1
+                        else
+                            echo "❌ Swift compiler still not found after installation."
+                            echo "   The Xcode Command Line Tools installation may have failed."
+                            echo ""
+
+                            # Offer Homebrew as alternative
+                            if [ "$USE_DEFAULTS" = "1" ]; then
+                                try_brew="y"
+                                echo "Auto-install mode: Will try Homebrew installation..."
+                            else
+                                printf "Would you like to try installing Swift via Homebrew instead? (Y/n): "
+                                read -r try_brew
+                            fi
+
+                            if [ "$try_brew" != "n" ] && [ "$try_brew" != "N" ]; then
+                                echo ""
+                                # Check if Homebrew is installed
+                                if ! command -v brew >/dev/null 2>&1; then
+                                    echo "Homebrew is not installed."
+                                    if [ "$USE_DEFAULTS" = "1" ]; then
+                                        install_brew="y"
+                                        echo "Auto-install mode: Installing Homebrew..."
+                                    else
+                                        printf "Install Homebrew now? (Y/n): "
+                                        read -r install_brew
+                                    fi
+
+                                    if [ "$install_brew" != "n" ] && [ "$install_brew" != "N" ]; then
+                                        echo ""
+                                        echo "Installing Homebrew..."
+                                        echo "This may take several minutes and requires sudo access."
+                                        echo ""
+
+                                        # Install Homebrew (as the real user, not root)
+                                        if [ -n "${SUDO_USER:-}" ]; then
+                                            sudo -u "$SUDO_USER" /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                                        else
+                                            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                                        fi
+
+                                        # Check if brew is now available
+                                        if ! command -v brew >/dev/null 2>&1; then
+                                            # Try common Homebrew paths
+                                            if [ -x "/opt/homebrew/bin/brew" ]; then
+                                                export PATH="/opt/homebrew/bin:$PATH"
+                                            elif [ -x "/usr/local/bin/brew" ]; then
+                                                export PATH="/usr/local/bin:$PATH"
+                                            fi
+                                        fi
+
+                                        if command -v brew >/dev/null 2>&1; then
+                                            echo "✅ Homebrew installed successfully!"
+                                        else
+                                            echo "❌ Homebrew installation failed."
+                                            echo "   Please install manually: https://brew.sh"
+                                            exit 1
+                                        fi
+                                    else
+                                        echo "Homebrew installation declined. Cannot proceed without Swift compiler."
+                                        exit 1
+                                    fi
+                                fi
+
+                                # Now install Swift via Homebrew
+                                echo ""
+                                echo "Installing Swift via Homebrew..."
+                                if [ -n "${SUDO_USER:-}" ]; then
+                                    sudo -u "$SUDO_USER" brew install swift
+                                else
+                                    brew install swift
+                                fi
+
+                                # Verify Swift is now available
+                                if command -v swift >/dev/null 2>&1 || command -v swiftc >/dev/null 2>&1; then
+                                    echo "✅ Swift compiler installed successfully via Homebrew!"
+                                    HAS_SWIFT=1
+                                else
+                                    echo "❌ Swift installation via Homebrew failed."
+                                    echo "   Please try manually: brew install swift"
+                                    exit 1
+                                fi
+                            else
+                                echo ""
+                                echo "Installation cancelled. Swift compiler is required to continue."
+                                echo ""
+                                echo "Manual installation options:"
+                                echo "  1. Retry: xcode-select --install"
+                                echo "  2. Install Homebrew and Swift:"
+                                echo "     /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+                                echo "     brew install swift"
+                                exit 1
+                            fi
+                        fi
+                    fi
+
+                    echo ""
+
+                    # Re-check critical dependencies
+                    if [ -n "$MISSING_CRITICAL" ]; then
+                        # Check for built-in tools that should never be missing
+                        if echo "$MISSING_CRITICAL" | grep -qE "networksetup|ipconfig|launchctl"; then
+                            echo "❌ Critical macOS system tools are missing."
+                            echo "   Your macOS installation may be corrupted."
+                            echo -n "   Tools missing:"
+                            echo "$MISSING_CRITICAL" | grep -qw "networksetup" && echo -n " networksetup"
+                            echo "$MISSING_CRITICAL" | grep -qw "ipconfig" && echo -n " ipconfig"
+                            echo "$MISSING_CRITICAL" | grep -qw "launchctl" && echo -n " launchctl"
+                            echo ""
+                            exit 1
+                        fi
+                    fi
+
+                    if [ -n "$MISSING_OPTIONAL" ]; then
+                        if echo "$MISSING_OPTIONAL" | grep -q "ping"; then
+                            echo "⚠️  Note: ping is still not available"
+                            echo "   Internet connectivity monitoring will be limited to basic checks"
+                        fi
+                    fi
+
+                    echo ""
+                    echo "✅ Critical dependencies satisfied!"
+                    echo ""
+                else
+                    # User declined installation
+                    if [ -n "$MISSING_CRITICAL" ]; then
+                        echo ""
+                        echo "❌ Cannot continue without critical dependencies."
+                        if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                            echo ""
+                            echo "Swift compiler is required to build the network watcher."
+                            echo "Please install Xcode Command Line Tools:"
+                            echo "  xcode-select --install"
+                        fi
+                        if echo "$MISSING_CRITICAL" | grep -qE "networksetup|ipconfig|launchctl"; then
+                            echo ""
+                            echo -n "Missing critical macOS system tools:"
+                            echo "$MISSING_CRITICAL" | grep -qw "networksetup" && echo -n " networksetup"
+                            echo "$MISSING_CRITICAL" | grep -qw "ipconfig" && echo -n " ipconfig"
+                            echo "$MISSING_CRITICAL" | grep -qw "launchctl" && echo -n " launchctl"
+                            echo ""
+                            echo "Your macOS installation may be corrupted."
+                        fi
+                        exit 1
+                    else
+                        # Only optional missing
+                        echo ""
+                        echo "Continuing with optional dependencies missing."
+                        echo ""
+                        if echo "$MISSING_OPTIONAL" | grep -q "ping"; then
+                            echo "⚠️  Limited functionality:"
+                            echo "   • Internet connectivity monitoring will use basic checks only"
+                            echo "   • Gateway ping and custom ping targets won't be available"
+                        fi
+                        echo ""
+                    fi
+                fi
+            else
+                # Cannot auto-install anything
+                if [ -n "$MISSING_CRITICAL" ]; then
+                    echo "❌ Cannot continue: Critical dependencies missing."
+                    echo "   Your macOS system tools appear to be corrupted."
+                    exit 1
+                else
+                    printf "Continue with limited functionality? (y/N): "
+                    read -r continue_install
+                    if [ "$continue_install" != "y" ] && [ "$continue_install" != "Y" ]; then
+                        echo "Installation cancelled."
+                        exit 0
+                    fi
+                    echo ""
+                fi
+            fi
+        else
+            # Non-interactive mode - check for AUTO_INSTALL_DEPS
+            if [ "${AUTO_INSTALL_DEPS:-0}" = "1" ]; then
+                echo "Non-interactive mode with AUTO_INSTALL_DEPS=1"
+
+                if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                    echo ""
+                    echo "⚠️  Cannot auto-install Xcode Command Line Tools in non-interactive mode."
+                    echo "   This requires manual interaction with a dialog."
+                    echo ""
+                    echo "Options:"
+                    echo "  1. Run interactively: sudo sh install.sh"
+                    echo "  2. Pre-install: xcode-select --install (then re-run installer)"
+                    echo "  3. Use Homebrew: brew install swift (if you can't use App Store)"
+                    exit 1
+                fi
+
+                if echo "$MISSING_CRITICAL" | grep -qE "networksetup|ipconfig|launchctl"; then
+                    echo "❌ Critical macOS system tools are missing."
+                    echo -n "   Tools missing:"
+                    echo "$MISSING_CRITICAL" | grep -qw "networksetup" && echo -n " networksetup"
+                    echo "$MISSING_CRITICAL" | grep -qw "ipconfig" && echo -n " ipconfig"
+                    echo "$MISSING_CRITICAL" | grep -qw "launchctl" && echo -n " launchctl"
+                    echo ""
+                    echo "   Your macOS installation may be corrupted."
+                    exit 1
+                fi
+
+                echo "⚠️  Continuing with optional dependencies missing."
+                echo ""
+            elif [ -n "$MISSING_CRITICAL" ]; then
+                echo "❌ Cannot continue: Critical dependencies missing."
+                if echo "$MISSING_CRITICAL" | grep -q "xcode-cli-tools"; then
+                    echo "   Please install: xcode-select --install"
+                    echo "   Or use Homebrew: brew install swift"
+                    echo "   Or run with: sudo AUTO_INSTALL_DEPS=1 sh install.sh (interactive)"
+                fi
+                if echo "$MISSING_CRITICAL" | grep -qE "networksetup|ipconfig|launchctl"; then
+                    echo -n "   System tools missing:"
+                    echo "$MISSING_CRITICAL" | grep -qw "networksetup" && echo -n " networksetup"
+                    echo "$MISSING_CRITICAL" | grep -qw "ipconfig" && echo -n " ipconfig"
+                    echo "$MISSING_CRITICAL" | grep -qw "launchctl" && echo -n " launchctl"
+                    echo ""
+                fi
+                exit 1
+            else
+                echo "⚠️  Continuing with optional dependencies missing."
+                echo ""
+            fi
+        fi
+    else
+        echo "✅ All dependencies satisfied!"
+        echo ""
+    fi
+}
 
 ensure_root(){
   if [ "$(id -u)" -ne 0 ]; then
@@ -125,19 +495,12 @@ detect_interfaces() {
         done
     fi
 
-    if [ -n "${ETHERNET_INTERFACE:-}" ]; then
-        AUTO_ETH="$ETHERNET_INTERFACE"
-    fi
-    if [ -n "${WIFI_INTERFACE:-}" ]; then
-        AUTO_WIFI="$WIFI_INTERFACE"
-    fi
-
     # Method 5: Final fallback - any enX that's not Wi-Fi
     if [ -z "$AUTO_ETH" ]; then
         AUTO_ETH=$(networksetup -listallhardwareports | awk '/Device: en/ {print $2}' | grep -v "^${AUTO_WIFI}$" | head -n 1) || AUTO_ETH=""
     fi
 
-    if [ -t 0 ]; then
+    if [ -t 0 ] && [ "$USE_DEFAULTS" = "0" ]; then
         echo ""
         echo "Available network interfaces:"
         networksetup -listallhardwareports
@@ -153,6 +516,17 @@ detect_interfaces() {
         read -r input_eth
         ETH_DEV=${input_eth:-$AUTO_ETH}
 
+        # Build interface priority from detected interfaces
+        if [ -n "$ETH_DEV" ] && [ -n "$WIFI_DEV" ]; then
+            INTERFACE_PRIORITY="${ETH_DEV},${WIFI_DEV}"
+        elif [ -n "$ETH_DEV" ]; then
+            INTERFACE_PRIORITY="${ETH_DEV}"
+        elif [ -n "$WIFI_DEV" ]; then
+            INTERFACE_PRIORITY="${WIFI_DEV}"
+        else
+            INTERFACE_PRIORITY=""
+        fi
+
         echo ""
         echo "DHCP Timeout Configuration:"
         echo "  When ethernet connects, the interface becomes active but may not"
@@ -163,17 +537,207 @@ detect_interfaces() {
         printf "Enter DHCP timeout in seconds [7]: "
         read -r input_timeout
         TIMEOUT=${input_timeout:-7}
+
+        echo ""
+        echo "Periodic Internet Connectivity Monitoring:"
+        echo "  Enable active monitoring of actual internet availability, not just link status."
+        echo "  The system will periodically check and switch to WiFi if Ethernet has no internet"
+        echo "  and to Ethernet if WiFi has no internet."
+        echo "  Uses minimal resources with timer-based checks (not continuous polling)."
+        echo ""
+        printf "Enable periodic internet monitoring? [Y/n]: "
+        read -r input_check_internet
+        if [ "$input_check_internet" = "n" ] || [ "$input_check_internet" = "N" ]; then
+            CHECK_INTERNET=0
+            CHECK_METHOD="gateway"
+            CHECK_TARGET=""
+            LOG_ALL_CHECKS=0
+            CHECK_INTERVAL=0
+            echo "Disabled: Event-driven checks only (no periodic monitoring)"
+        else
+            CHECK_INTERNET=1
+
+            echo ""
+            echo "Select connectivity check method:"
+            echo "  1) Ping to gateway (recommended - most reliable and provider-safe)"
+            echo "  2) Ping to domain/IP address"
+            echo "  3) HTTP/HTTPS check (curl) - May be blocked by ISP/firewall"
+            echo ""
+            printf "Enter choice [1]: "
+            read -r input_check_method
+            input_check_method=${input_check_method:-1}
+
+            case "$input_check_method" in
+                1)
+                    CHECK_METHOD="gateway"
+                    CHECK_TARGET=""
+                    echo "Selected: Gateway ping (auto-detected per interface)"
+                    ;;
+                2)
+                    CHECK_METHOD="ping"
+                    printf "Enter domain/IP to ping [8.8.8.8]: "
+                    read -r input_check_target
+                    CHECK_TARGET=${input_check_target:-8.8.8.8}
+                    echo "Selected: Ping to $CHECK_TARGET"
+                    ;;
+                3)
+                    CHECK_METHOD="curl"
+                    echo ""
+                    echo "⚠️  WARNING: HTTP/HTTPS checks may be blocked by:"
+                    echo "   - Corporate firewalls"
+                    echo "   - ISP content filtering"
+                    echo "   - Captive portals (ironically)"
+                    echo "   - Deep packet inspection systems"
+                    echo ""
+                    printf "Enter URL to check [http://captive.apple.com/hotspot-detect.html]: "
+                    read -r input_check_target
+                    CHECK_TARGET=${input_check_target:-http://captive.apple.com/hotspot-detect.html}
+                    echo "Selected: HTTP check to $CHECK_TARGET"
+                    ;;
+                *)
+                    echo "Invalid choice, using gateway ping (default)"
+                    CHECK_METHOD="gateway"
+                    CHECK_TARGET=""
+                    ;;
+            esac
+
+            echo ""
+            printf "Check interval in seconds [30]: "
+            read -r input_check_interval
+            CHECK_INTERVAL=${input_check_interval:-30}
+            echo "Enabled: Will check internet connectivity every ${CHECK_INTERVAL} seconds using $CHECK_METHOD"
+
+            echo ""
+            printf "Log changes only? [Y/n]: "
+            read -r input_log_checks
+            if [ "$input_log_checks" = "n" ] || [ "$input_log_checks" = "N" ]; then
+                LOG_ALL_CHECKS=1
+                echo "Will log every check attempt"
+            else
+                LOG_ALL_CHECKS=0
+                echo "Will log only state changes (failure/recovery)"
+            fi
+        fi
+    elif [ "$USE_DEFAULTS" = "1" ]; then
+        echo "============================================"
+        echo "Auto-install mode (--auto flag detected)"
+        echo "============================================"
+        echo "Using detected interfaces and recommended defaults..."
+        echo ""
+        WIFI_DEV="$AUTO_WIFI"
+        ETH_DEV="$AUTO_ETH"
+        # Build default interface priority from detected interfaces
+        if [ -z "${INTERFACE_PRIORITY:-}" ]; then
+            if [ -n "$AUTO_ETH" ] && [ -n "$AUTO_WIFI" ]; then
+                INTERFACE_PRIORITY="${AUTO_ETH},${AUTO_WIFI}"
+            elif [ -n "$AUTO_ETH" ]; then
+                INTERFACE_PRIORITY="${AUTO_ETH}"
+            elif [ -n "$AUTO_WIFI" ]; then
+                INTERFACE_PRIORITY="${AUTO_WIFI}"
+            fi
+        fi
+        TIMEOUT="${TIMEOUT:-7}"
+        CHECK_INTERNET="${CHECK_INTERNET:-1}"
+        CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
+        CHECK_METHOD="${CHECK_METHOD:-ping}"
+        CHECK_TARGET="${CHECK_TARGET:-8.8.8.8}"
+        LOG_ALL_CHECKS="${LOG_ALL_CHECKS:-0}"
+        echo "  Detected Wi-Fi:   $WIFI_DEV"
+        echo "  Detected Ethernet: $ETH_DEV"
+        echo "  Interface Priority: ${INTERFACE_PRIORITY:-none}"
+        echo "  Internet monitoring: ✅ ENABLED"
+        echo "    Method: ping to $CHECK_TARGET every ${CHECK_INTERVAL}s"
+        echo "    DHCP timeout: ${TIMEOUT}s"
+        echo ""
     else
         WIFI_DEV="$AUTO_WIFI"
         ETH_DEV="$AUTO_ETH"
+        # Build default interface priority from detected interfaces
+        if [ -z "${INTERFACE_PRIORITY:-}" ]; then
+            if [ -n "$AUTO_ETH" ] && [ -n "$AUTO_WIFI" ]; then
+                INTERFACE_PRIORITY="${AUTO_ETH},${AUTO_WIFI}"
+            elif [ -n "$AUTO_ETH" ]; then
+                INTERFACE_PRIORITY="${AUTO_ETH}"
+            elif [ -n "$AUTO_WIFI" ]; then
+                INTERFACE_PRIORITY="${AUTO_WIFI}"
+            fi
+        fi
         TIMEOUT="${TIMEOUT:-7}"
+        CHECK_INTERNET="${CHECK_INTERNET:-0}"
+        CHECK_INTERVAL="${CHECK_INTERVAL:-0}"
+        CHECK_METHOD="${CHECK_METHOD:-gateway}"
+        CHECK_TARGET="${CHECK_TARGET:-}"
+        LOG_ALL_CHECKS="${LOG_ALL_CHECKS:-0}"
     fi
 
     echo ""
-    echo "Using configuration:"
-    echo "  Wi-Fi:    ${WIFI_DEV:-not found}"
-    echo "  Ethernet: ${ETH_DEV:-not found}"
-    echo "  Timeout:  ${TIMEOUT}s"
+    echo "============================================"
+    echo "Configuration Summary"
+    echo "============================================"
+    echo ""
+    echo "Network Interfaces:"
+    if [ -n "${INTERFACE_PRIORITY:-}" ]; then
+        echo "  Interface Priority: $INTERFACE_PRIORITY"
+    fi
+    echo "  Wi-Fi Device:     ${WIFI_DEV:-not found}"
+    echo "  Ethernet Device:  ${ETH_DEV:-not found}"
+    echo "  DHCP Timeout:     ${TIMEOUT}s"
+    echo ""
+    echo "Internet Connectivity Monitoring:"
+    if [ "$CHECK_INTERNET" = "1" ]; then
+        echo "  Status:           ✅ ENABLED"
+        echo "  Check Method:     $CHECK_METHOD"
+        if [ -n "$CHECK_TARGET" ]; then
+            echo "  Check Target:     $CHECK_TARGET"
+        fi
+        echo "  Check Interval:   ${CHECK_INTERVAL}s"
+        if [ "$LOG_ALL_CHECKS" = "0" ]; then
+            echo "  Log changes only: Yes"
+        else
+            echo "  Log changes only: No (logs every check)"
+        fi
+        echo ""
+        echo "How it works:"
+        echo "  • Ethernet connection will be tested for internet connectivity"
+        echo "  • If ethernet internet fails, will automatically failover to WiFi"
+        echo "  • WiFi will be disabled when ethernet internet is working"
+        if [ "$CHECK_METHOD" = "gateway" ]; then
+            echo "  • Gateway method: Tests local router connectivity (fast but local only)"
+        elif [ "$CHECK_METHOD" = "ping" ]; then
+            echo "  • Ping method: Tests connectivity to $CHECK_TARGET"
+        elif [ "$CHECK_METHOD" = "curl" ]; then
+            echo "  • HTTP method: Tests full internet connectivity (most reliable)"
+        fi
+
+        # Verify curl is available (required for multi-interface checking on macOS)
+        if ! command -v curl >/dev/null 2>&1; then
+            echo ""
+            echo "⚠️  WARNING: curl is not installed but required for checking inactive interfaces"
+            echo "   on macOS. Install curl or internet checking will only work for the active"
+            echo "   interface. Curl is standard on macOS, this is unexpected."
+            echo ""
+        fi
+    else
+        echo "  Status:           ❌ DISABLED"
+        echo ""
+        echo "How it works:"
+        echo "  • Will switch based on ethernet cable connection only"
+        echo "  • WiFi disabled when ethernet cable is plugged in (has IP address)"
+        echo "  • WiFi enabled when ethernet cable is unplugged (no IP address)"
+        echo ""
+        echo "⚠️  IMPORTANT: Internet connectivity is NOT validated!"
+        echo "   If ethernet cable is plugged in but internet is broken,"
+        echo "   WiFi will remain OFF and you will have no connectivity."
+        echo ""
+        echo "   To enable internet monitoring, set CHECK_INTERNET=1 in the config"
+        echo "   or reinstall with internet checking enabled."
+        echo ""
+    fi
+    if [ -n "${INTERFACE_PRIORITY:-}" ]; then
+        echo "Advanced:"
+        echo "  Interface Priority: $INTERFACE_PRIORITY"
+        echo ""
+    fi
 
     if [ -z "$WIFI_DEV" ] || [ -z "$ETH_DEV" ]; then
         die "Both Wi-Fi and Ethernet interfaces must be specified to continue."
@@ -268,6 +832,10 @@ main(){
     echo "TEST_MODE=1: skipping macOS install steps."
     exit 0
   fi
+
+  # Check dependencies before proceeding
+  check_dependencies
+
   ensure_root
   cleanup_existing
   echo ""
@@ -307,6 +875,11 @@ main(){
   sed -i '' "s|ETH_DEV=\"\${ETH_DEV:-en5}\"|ETH_DEV=\"$ETH_DEV\"|g" "$WORK_HELPER"
   sed -i '' "s|STATE_DIR=\"\${STATE_DIR:-/tmp}\"|STATE_DIR=\"$STATE_DIR\"|g" "$WORK_HELPER"
   sed -i '' "s|TIMEOUT=\"\${TIMEOUT:-7}\"|TIMEOUT=\"$TIMEOUT\"|g" "$WORK_HELPER"
+  sed -i '' "s|CHECK_INTERNET=\"\${CHECK_INTERNET:-0}\"|CHECK_INTERNET=\"$CHECK_INTERNET\"|g" "$WORK_HELPER"
+  sed -i '' "s|CHECK_METHOD=\"\${CHECK_METHOD:-gateway}\"|CHECK_METHOD=\"$CHECK_METHOD\"|g" "$WORK_HELPER"
+  sed -i '' "s|CHECK_TARGET=\"\${CHECK_TARGET:-}\"| CHECK_TARGET=\"$CHECK_TARGET\"|g" "$WORK_HELPER"
+  sed -i '' "s|LOG_ALL_CHECKS=\"\${LOG_ALL_CHECKS:-0}\"|LOG_ALL_CHECKS=\"$LOG_ALL_CHECKS\"|g" "$WORK_HELPER"
+  sed -i '' "s|INTERFACE_PRIORITY=\"\${INTERFACE_PRIORITY:-}\"|INTERFACE_PRIORITY=\"$INTERFACE_PRIORITY\"|g" "$WORK_HELPER"
   chmod +x "$WORK_HELPER"
 
   echo "Extracting watcher binary..."
@@ -331,6 +904,7 @@ main(){
   sed -i '' "s|\$WATCH_ERR|$WATCH_ERR|g" "$WORK_PLIST"
   sed -i '' "s|\$WIFI_DEV|$WIFI_DEV|g" "$WORK_PLIST"
   sed -i '' "s|\$ETH_DEV|$ETH_DEV|g" "$WORK_PLIST"
+  sed -i '' "s|\$CHECK_INTERVAL|$CHECK_INTERVAL|g" "$WORK_PLIST"
   sed -i '' "s|\$WORKDIR|$WORKDIR|g" "$WORK_PLIST"
 
   cp -f "$WORK_PLIST" "$SYS_PLIST_PATH"
@@ -352,11 +926,54 @@ main(){
   echo ""
   echo "✅ Installation complete."
   echo ""
-  echo "The service is now running. It will automatically:"
-  echo "  • Turn Wi-Fi off when Ethernet is connected"
-  echo "  • Turn Wi-Fi on when Ethernet is disconnected"
-  echo "  • Continue working after OS reboot"
-  echo "Logs: $WATCH_LOG (watcher) and $HELPER_LOG (helper). Tail with: tail -f \"$WATCH_LOG\" \"$HELPER_LOG\""
+  echo "The service is now running. Starting in 3 seconds..."
+  echo ""
+
+  if [ "$CHECK_INTERNET" = "1" ]; then
+      # Internet monitoring enabled - explain full behavior
+      echo "How it works:"
+      if [ -n "${INTERFACE_PRIORITY:-}" ]; then
+          echo "  • When primary interface has internet → I'll use it and disable others"
+          echo "  • When primary interface loses internet → I'll switch to next working interface"
+          echo "  • When higher priority interface restores internet → I'll switch back to it"
+          echo "  • Interface priority: $INTERFACE_PRIORITY"
+      else
+          echo "  • When Ethernet connected with internet → I'll disable WiFi"
+          echo "  • When Ethernet connected but no internet → I'll switch to WiFi (automatic failover)"
+          echo "  • When Ethernet disconnected → I'll switch to WiFi"
+      fi
+      if [ "$CHECK_METHOD" = "gateway" ]; then
+          echo "  • Validates connectivity by pinging gateway every ${CHECK_INTERVAL}s"
+      elif [ "$CHECK_METHOD" = "ping" ]; then
+          echo "  • Validates connectivity by pinging $CHECK_TARGET every ${CHECK_INTERVAL}s"
+      elif [ "$CHECK_METHOD" = "curl" ]; then
+          echo "  • Validates connectivity via HTTP to $CHECK_TARGET every ${CHECK_INTERVAL}s"
+      fi
+      echo "  • Continues working after OS reboot"
+  else
+      # Internet monitoring disabled - simpler behavior
+      echo "How it works:"
+      if [ -n "${INTERFACE_PRIORITY:-}" ]; then
+          echo "  • I'll use highest priority interface that has an IP address"
+          echo "  • Interface priority: $INTERFACE_PRIORITY"
+      else
+          echo "  • When Ethernet connected (has IP) → I'll disable WiFi"
+          echo "  • When Ethernet disconnected (no IP) → I'll enable WiFi"
+      fi
+      echo "  • Continues working after OS reboot"
+      echo ""
+      echo "  ⚠️  Note: Internet connectivity is NOT validated."
+      echo "     If an interface has IP but no internet, it will still be used."
+  fi
+  echo "Logging:"
+  echo "  View real-time logs (watcher and helper):"
+  echo "    tail -f \"$WATCH_LOG\" \"$HELPER_LOG\""
+  echo "  View watcher logs only:"
+  echo "    tail -f \"$WATCH_LOG\""
+  echo "  View helper logs only:"
+  echo "    tail -f \"$HELPER_LOG\""
+  echo "  View last 50 lines:"
+  echo "    tail -n 50 \"$WATCH_LOG\" \"$HELPER_LOG\""
   echo ""
   echo "To uninstall, run:"
   echo "  sudo sh \"$WORK_UNINSTALL\""
@@ -369,6 +986,10 @@ uninstall() {
   fi
   ensure_root
   echo "Uninstalling..."
+  # Try to detect WORKDIR from installed uninstaller if not set
+  if [ -z "$WORKDIR" ] && [ -f "$DEFAULT_WORKDIR/uninstall.sh" ]; then
+    WORKDIR="$DEFAULT_WORKDIR"
+  fi
   # We need to extract the uninstaller script to run it
   # or we can just embed the logic here.
   # Since we already have UNINSTALL_CONTENT_B64, let's use it.

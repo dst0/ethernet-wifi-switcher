@@ -30,22 +30,28 @@ fi
 
 echo "Uninstalling Ethernet/Wi-Fi Auto Switcher..."
 
-if [ "$IS_TEST" = "1" ]; then
-    echo "TEST_MODE=1: skipping systemd operations."
-else
+# Stop service and clean up files
+if [ "$IS_TEST" != "1" ]; then
     if systemctl is-active --quiet "$SERVICE_NAME"; then
         systemctl stop "$SERVICE_NAME"
     fi
+fi
 
-    pkill -f "eth-wifi-auto.sh" || true
+pkill -f "eth-wifi-auto.sh" || true
 
+if [ "$IS_TEST" != "1" ]; then
     if systemctl is-enabled --quiet "$SERVICE_NAME"; then
         systemctl disable "$SERVICE_NAME"
     fi
+fi
 
-    rm -f "$SERVICE_FILE"
-    rm -f "$INSTALL_DIR/eth-wifi-auto.sh"
+# Remove files (both TEST_MODE and normal)
+rm -f "$SERVICE_FILE"
+rm -f "$INSTALL_DIR/eth-wifi-auto.sh"
+rm -f "$INSTALL_DIR/uninstall.sh"
+rm -rf "$INSTALL_DIR"
 
+if [ "$IS_TEST" != "1" ]; then
     systemctl daemon-reload
 fi
 
