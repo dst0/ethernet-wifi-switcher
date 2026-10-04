@@ -1,0 +1,33 @@
+{
+  "name": "ethernet-wifi-switcher",
+  "version": "1.0.0",
+  "description": "Automatic Ethernet/Wi-Fi switcher with TypeScript core engine",
+  "main": "dist/ts/index.js",
+  "bin": {
+    "eth-wifi-switcher": "./dist/ts/cli/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/ts --ext .ts",
+    "lint:fix": "eslint src/ts --ext .ts --fix",
+    "clean": "rm -rf dist/ts coverage"
+  },
+  "keywords": ["ethernet", "wifi", "network", "switcher", "automation"],
+  "author": "",
+  "license": "SEE LICENSE IN LICENSE",
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.0.3",
+    "@typescript-eslint/eslint-plugin": "^8.51.0",
+    "@typescript-eslint/parser": "^8.51.0",
+    "eslint": "^9.39.2",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

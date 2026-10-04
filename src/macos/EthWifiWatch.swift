@@ -3,8 +3,8 @@ import SystemConfiguration
 
 // Configuration from command line arguments
 let args = CommandLine.arguments
-if args.count < 7 {
-    print("Usage: \(args[0]) <helperPath> <helperLog> <helperErr> <daemonLabel> <wifiDev> <ethDev>")
+if args.count < 8 {
+    print("Usage: \(args[0]) <helperPath> <helperLog> <helperErr> <daemonLabel> <wifiDev> <ethDev> <checkInterval>")
     exit(1)
 }
 
@@ -14,6 +14,7 @@ let helperErr = args[3]
 let daemonLabel = args[4]
 let wifiDev = args[5]
 let ethDev = args[6]
+let checkInterval = TimeInterval(args[7]) ?? 0.0 // 0 means disabled
 
 // Single check after delay to let network settle
 let retryDelays: [TimeInterval] = [2.0]
@@ -21,6 +22,9 @@ let retryDelays: [TimeInterval] = [2.0]
 // Prevent callback storms from spawning multiple batches
 let minGapBetweenBatches: TimeInterval = 5.0
 var lastBatch = Date(timeIntervalSince1970: 0)
+
+// Periodic internet check timer
+var periodicTimer: Timer?
 
 func log(_ msg: String) {
     print("[\(Date())] \(msg)")
@@ -83,5 +87,13 @@ CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .defaultMode)
 
 // Startup batch
 runBatch(reason: "startup")
+
+// Set up periodic internet check timer if enabled
+if checkInterval > 0 {
+    log("Periodic internet check enabled: every \(Int(checkInterval))s")
+    periodicTimer = Timer.scheduledTimer(withTimeInterval: checkInterval, repeats: true) { _ in
+        runHelper(reason: "periodic-check")
+    }
+}
 
 CFRunLoopRun()
