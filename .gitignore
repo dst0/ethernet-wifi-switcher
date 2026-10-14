@@ -18,3 +18,4 @@ ethwifiauto-watch-*
 state/
 bin/
 obj/
+.pdev/
